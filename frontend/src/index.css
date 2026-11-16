@@ -1,0 +1,27 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    font-feature-settings: "tnum" 1;
+    font-variant-numeric: tabular-nums;
+    background-color: #f5f0e6;
+    color: #1e1914;
+  }
+
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: #ede5d5;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #c5b69d;
+    border-radius: 3px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #9a6b22;
+  }
+}

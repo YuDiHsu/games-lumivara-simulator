@@ -1,0 +1,26 @@
+# Python / uv / pytest
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Node / Vite / TypeScript
+frontend/node_modules/
+frontend/dist/
+frontend/*.tsbuildinfo
+
+# Runtime SQLite database (auto-initialized on startup from data/wiki_ground_truth.json)
+data/*.db
+data/*.db-shm
+data/*.db-wal
+data/*.sqlite*
+
+# Environment & OS files
+.env
+.env.*
+.DS_Store
+Thumbs.db
