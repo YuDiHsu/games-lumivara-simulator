@@ -34,6 +34,7 @@ import {
   buildInitialSimState,
   deriveEvaluateArgs,
   LumivaraBuildExportV1,
+  preserveSimStateWithNewBenchmark,
   SimState,
 } from './utils/simState';
 
@@ -139,8 +140,15 @@ export const App: React.FC = () => {
   const [buildJsonModalTab, setBuildJsonModalTab] = useState<'export' | 'import' | null>(null);
   const [importNotice, setImportNotice] = useState<string | null>(null);
   const pendingImportRef = useRef<LumivaraBuildExportV1 | null>(null);
+  const simStateRef = useRef<SimState | null>(null);
+  const simDirtyRef = useRef<boolean>(false);
+  const prevBenchJobIdRef = useRef<string>(optimizeResult.job.id);
+  const forceResetSimRef = useRef<boolean>(false);
   const evalAbortRef = useRef<AbortController | null>(null);
   const evalSeqRef = useRef<number>(0);
+
+  simStateRef.current = simState;
+  simDirtyRef.current = simDirty;
 
   // Load initial metadata & CDC state from SQLite-backed FastAPI endpoints
   useEffect(() => {
@@ -249,12 +257,16 @@ export const App: React.FC = () => {
       optimizeResult.job.offhand_type
     );
     const pending = pendingImportRef.current;
+    const prevJobId = prevBenchJobIdRef.current;
+    prevBenchJobIdRef.current = optimizeResult.job.id;
+
     if (
       pending &&
       pending.job_id.toLowerCase() === optimizeResult.job.id.toLowerCase() &&
       pending.level === optimizeResult.level
     ) {
       pendingImportRef.current = null;
+      forceResetSimRef.current = false;
       const { simState: merged, warnings } = applyImportedBuildToSimState(
         freshBase,
         pending,
@@ -274,6 +286,24 @@ export const App: React.FC = () => {
       );
       return;
     }
+
+    if (
+      simDirtyRef.current &&
+      simStateRef.current &&
+      prevJobId === optimizeResult.job.id &&
+      !forceResetSimRef.current
+    ) {
+      const preserved = preserveSimStateWithNewBenchmark(
+        simStateRef.current,
+        freshBase,
+        optimizeResult.level
+      );
+      setSimState(preserved);
+      setSimDirty(true);
+      return;
+    }
+
+    forceResetSimRef.current = false;
     setSimState(freshBase);
     setSimDirty(false);
     setSimResult(null);
@@ -401,12 +431,19 @@ export const App: React.FC = () => {
 
   const handleChangeJob = (jid: string) => {
     pendingImportRef.current = null;
+    forceResetSimRef.current = true;
     setImportNotice(null);
     setSelectedJobId(jid);
     const nextJob = jobs.find((j) => j.id === jid);
     if (nextJob) {
       setGear(buildBaselineGearForJob(nextJob));
     }
+  };
+
+  const handleSelectRank = (rank: number) => {
+    forceResetSimRef.current = true;
+    setImportNotice(null);
+    setSelectedRank(rank);
   };
 
   const handleSyncWiki = async (simulatePatch: boolean) => {
@@ -489,7 +526,7 @@ export const App: React.FC = () => {
           simResult={simResult}
           isSimulating={isSimulating}
           onChangeCardMode={setCardMode}
-          onSelectRank={setSelectedRank}
+          onSelectRank={handleSelectRank}
           onToggleLightCoating={(useLight) => {
             setGear((prev) => ({
               ...prev,

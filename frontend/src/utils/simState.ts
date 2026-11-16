@@ -1374,3 +1374,44 @@ export function applyImportedBuildToSimState(
     },
   };
 }
+
+/**
+ * Re-anchors benchmark baseline references (`baseline_slot_gear`, `baseline_gear_mods`,
+ * `baseline_slot_armor_sets`) when target (PvE/PvP/monster), passive pool, card mode,
+ * or level changes on the same job, while preserving all user-customized simulator values.
+ */
+export function preserveSimStateWithNewBenchmark(
+  prevSim: SimState,
+  freshBase: SimState,
+  level: number
+): SimState {
+  const maxCap = level >= 119 ? 119 : 99;
+  const totalBudget = calcTotalStatPoints(level);
+
+  const base_stats = { ...prevSim.base_stats };
+  for (const k of STAT_KEYS) {
+    base_stats[k] = Math.max(1, Math.min(maxCap, Math.round(base_stats[k] ?? 1)));
+  }
+
+  const calcUsed = () => STAT_KEYS.reduce((sum, k) => sum + calcCumulativeStatCost(base_stats[k]), 0);
+  while (calcUsed() > totalBudget) {
+    let bestKey: StatKey | null = null;
+    let bestVal = 1;
+    for (const k of STAT_KEYS) {
+      if (base_stats[k] > bestVal) {
+        bestVal = base_stats[k];
+        bestKey = k;
+      }
+    }
+    if (!bestKey) break;
+    base_stats[bestKey] -= 1;
+  }
+
+  return {
+    ...prevSim,
+    base_stats,
+    baseline_slot_gear: freshBase.baseline_slot_gear,
+    baseline_gear_mods: freshBase.baseline_gear_mods,
+    baseline_slot_armor_sets: freshBase.baseline_slot_armor_sets,
+  };
+}
