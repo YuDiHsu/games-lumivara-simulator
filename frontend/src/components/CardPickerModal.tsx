@@ -1,6 +1,12 @@
 import React, { useMemo, useState } from 'react';
 import { Check, Filter, RotateCcw, Search, Sparkles, Trash2, X } from 'lucide-react';
-import type { CardMechanicMeta, CardMeta } from '../api/client';
+import {
+  CardMechanicMeta,
+  CardMeta,
+  JobMeta,
+  TargetInput,
+  getCardMechanicWarning,
+} from '../api/client';
 
 export const CARD_SLOT_LABELS: Record<string, string> = {
   weapon_1: '武器卡槽 ①',
@@ -110,6 +116,8 @@ interface CardPickerModalProps {
   currentCardId: string | null;
   recommendedCardId: string | null;
   cardMechanics?: Record<string, CardMechanicMeta>;
+  job?: JobMeta;
+  target?: TargetInput;
   onSelectCard: (cardId: string | null) => void;
   onClose: () => void;
 }
@@ -120,6 +128,8 @@ export const CardPickerModal: React.FC<CardPickerModalProps> = ({
   currentCardId,
   recommendedCardId,
   cardMechanics,
+  job,
+  target,
   onSelectCard,
   onClose,
 }) => {
@@ -314,6 +324,16 @@ export const CardPickerModal: React.FC<CardPickerModalProps> = ({
               const isRecommended = card.id === recommendedCardId;
               const compatible = cardMatchesSlot(card, slotKey);
               const bonusPills = formatCardBonuses(card.bonuses);
+              const mechWarning = job
+                ? getCardMechanicWarning(card, {
+                    jobId: job.id,
+                    isMelee: job.is_melee,
+                    isParty: target?.is_party,
+                    isMonster: target?.is_monster,
+                    targetName: target?.name,
+                    targetDef: target?.target_def,
+                  })
+                : null;
 
               return (
                 <button
@@ -354,6 +374,11 @@ export const CardPickerModal: React.FC<CardPickerModalProps> = ({
                       {!compatible && (
                         <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#D3C6B0]/60 text-[#5C4E3C] border border-[#C5B69D]">
                           非此部位 ({card.slots.join(', ')})
+                        </span>
+                      )}
+                      {mechWarning && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#B45309]/12 text-[#92400E] border border-[#B45309]/35 font-semibold">
+                          ⚠ {mechWarning}
                         </span>
                       )}
                     </div>

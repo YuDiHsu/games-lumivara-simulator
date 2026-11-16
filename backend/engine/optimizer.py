@@ -216,6 +216,7 @@ def evaluate_dps(
     passives_catalog: Optional[Dict[str, Dict[str, Any]]] = None,
     sets_catalog: Optional[Dict[str, Dict[str, Any]]] = None,
     fast: bool = False,
+    disabled_skills: Optional[Sequence[str]] = None,
 ) -> Dict[str, Any]:
     """
     Computes exact Wiki stats, separated HIT vs ASPD metrics, mitigation,
@@ -223,6 +224,21 @@ def evaluate_dps(
     """
     p_cat = passives_catalog if passives_catalog is not None else PASSIVES
     s_cat = sets_catalog if sets_catalog is not None else ARMOR_SETS
+    disabled_set = {
+        str(x).strip().lower() for x in (disabled_skills or ()) if str(x).strip()
+    }
+    disabled_norm = {
+        "".join(ch for ch in item if ch.isalnum()) for item in disabled_set
+    }
+
+    def _is_skill_disabled(skill_id: str, skill_name: str = "") -> bool:
+        if not disabled_set:
+            return False
+        if skill_id.lower() in disabled_set or (skill_name and skill_name.lower() in disabled_set):
+            return True
+        n_id = "".join(ch for ch in skill_id.lower() if ch.isalnum())
+        n_nm = "".join(ch for ch in skill_name.lower() if ch.isalnum()) if skill_name else ""
+        return bool(n_id in disabled_norm or (n_nm and n_nm in disabled_norm))
 
     # 1) Accumulate Set Bonuses (handles 2pc stackable up to 3x, 4pc, and 6pc)
     set_acc: Dict[str, float] = {}
@@ -288,8 +304,13 @@ def evaluate_dps(
     )
 
     passive_acc: Dict[str, float] = {}
+    effective_innate_stats = (
+        {}
+        if (cls.job_id == "templar" and _is_skill_disabled("templarmastery", "Templar Mastery"))
+        else cls.innate_stats
+    )
     # Apply innate class passive stats first
-    _apply_bonus_dict(passive_acc, cls.innate_stats, scale=1.0)
+    _apply_bonus_dict(passive_acc, effective_innate_stats, scale=1.0)
 
     # King's Fair Value & HFT activate innately when Total STR == Total INT
     if cls.job_id == "king" and prelim_str == prelim_int:
@@ -528,9 +549,10 @@ def evaluate_dps(
     )
 
     if tgt.is_monster and "mRage" in card_mechs:
-        # Red Oni (mRage): +1% ATK/MATK per 4% missing HP up to +15% (~+7.5% steady average)
-        total_atk_pct += 0.075
-        total_matk_pct += 0.075
+        # Red Oni (mRage): +1% ATK/MATK per 4% missing HP up to +15%; melee frontliners sustain ~30% missing HP (+7.5%), ranged kiters less (+2.5%)
+        rage_bonus = 0.075 if cls.is_melee else 0.025
+        total_atk_pct += rage_bonus
+        total_matk_pct += rage_bonus
 
     if king_balanced:
         # Royal Balance innate bonus scales with balanced stat investment
@@ -629,29 +651,49 @@ def evaluate_dps(
     if set_acc.get("dealt_cut_pct", 0.0) > 0:
         global_dmg_mult *= max(0.1, 1.0 - set_acc["dealt_cut_pct"])
 
-    # Card special DPS mechanics (PvE only, matching Wiki card_mechanics)
+    # Card special DPS mechanics (PvE only, matching job kit & solo/party reachability)
     is_boss_target = (
         "boss" in tgt.name.lower()
         or "mvp" in tgt.name.lower()
         or "leader" in tgt.name.lower()
         or tgt.target_def >= 150
     )
+    persistent_status_jobs = {"mamushi", "thief", "nekobaku", "mage", "swordman", "ironfist"}
+    mob_cc_status_jobs = {"kensei", "archer", "king", "sinister", "necromancer", "merchant"}
+    is_party = bool(getattr(tgt, "is_party", False))
+
     if tgt.is_monster:
         if "mTitan" in card_mechs:
             global_dmg_mult *= 1.25 if is_boss_target else 0.90
         if "mExecute" in card_mechs:
-            global_dmg_mult *= 1.105  # +30% below 35% HP -> +10.5% fight average
+            global_dmg_mult *= 1.06 if is_party else 1.088
         if "mOpener" in card_mechs:
-            global_dmg_mult *= 1.02 if is_boss_target else 1.15
+            # First-hit untouched target (+20%): unreachable in Party or negligible in long Boss fights
+            if not is_party and not is_boss_target:
+                global_dmg_mult *= 1.08
         if "mWeakSpot" in card_mechs:
-            has_status = cls.primary_dmg_type != "magic" or cls.job_id in ("mage", "nekobaku") or bool(card_mechs & {"mLantern", "mMelt", "mGrasp"})
-            global_dmg_mult *= 1.10 if has_status else 1.04
+            # +12% vs debuffed monster: requires Party debuffs, job status kit, or status-card applicator
+            if is_party:
+                global_dmg_mult *= 1.10
+            elif cls.job_id in persistent_status_jobs:
+                global_dmg_mult *= 1.10
+            elif bool(card_mechs & {"mLantern", "mGrasp"}):
+                global_dmg_mult *= 1.06
+            elif (not is_boss_target) and (cls.job_id in mob_cc_status_jobs or bool(card_mechs & {"mCrack", "mMelt"})):
+                global_dmg_mult *= 1.07
         if "mFarShot" in card_mechs:
             global_dmg_mult *= 1.12 if not cls.is_melee else 0.90
-        if has_swarm_card and aspd >= 192.9:
-            global_dmg_mult *= 1.10  # Hornet Drone: +1% dmg/stack (+10%) when ASPD is capped
+        if has_swarm_card:
+            if aspd >= 192.9:
+                global_dmg_mult *= 1.10
+            elif aspd >= 188.0:
+                global_dmg_mult *= 1.06
+            elif aspd >= 180.0:
+                global_dmg_mult *= 1.02
 
     skill_dmg_mult = 1.0 + passive_acc.get("skill_dmg_pct", 0.0) + card_acc.get("skill_dmg_pct", 0.0) + set_acc.get("skill_dmg_pct", 0.0)
+    if tgt.is_monster and "mCocoa" in card_mechs:
+        skill_dmg_mult *= 0.90  # Cocoa Imp Card: -10% skill damage vs monsters
     if tgt.is_monster:
         if "mSurprise" in card_mechs:
             skill_dmg_mult *= 1.03
@@ -695,6 +737,19 @@ def evaluate_dps(
         raw_auto = total_matk * matk_scale_auto + max_hp * cls.auto_hp_scale
         auto_crit_rate = spell_crit_rate
         auto_mitigated = calc_damage_after_def(raw_auto, tgt.magic_def, magic_pierce)
+    elif cls.job_id == "templar":
+        guillotine_disabled = _is_skill_disabled("sacredguillotine", "Sacred Guillotine Chain")
+        colossus_disabled = _is_skill_disabled("colossusbash", "Colossus Radiant Bash")
+        guillotine_atk_scale = 0.0 if guillotine_disabled else 1.748
+        colossus_atk_scale = 0.0 if colossus_disabled else 0.4025
+        colossus_hp_scale = 0.0 if colossus_disabled else 0.021
+        base_auto_atk_scale = max(0.0, cls.auto_atk_scale - 1.748 - 0.4025)
+        raw_base_auto = total_atk * base_auto_atk_scale
+        raw_guillotine = total_atk * guillotine_atk_scale
+        raw_colossus = total_atk * colossus_atk_scale + max_hp * colossus_hp_scale
+        raw_auto = raw_base_auto + raw_guillotine + raw_colossus
+        auto_crit_rate = phys_crit_rate
+        auto_mitigated = calc_damage_after_def(raw_auto, tgt.phys_def, phys_pierce)
     else:
         raw_auto = total_atk * cls.auto_atk_scale + max_hp * cls.auto_hp_scale
         auto_crit_rate = phys_crit_rate
@@ -740,7 +795,28 @@ def evaluate_dps(
     auto_dps = (auto_dmg_per_hit + proc_dmg_per_hit) * aps + companion_dps
 
     # 11) Active Skill DPS Breakdown & Summons
-    dps_breakdown: Dict[str, float] = {"Auto-Attack (+Procs)": round(auto_dps, 2)}
+    if cls.job_id == "templar":
+        auto_common_mult = (
+            auto_elem_mult
+            * auto_crit_factor
+            * auto_hit_factor
+            * global_dmg_mult
+            * basic_dmg_mult
+            * double_atk_mult
+            * aps
+        )
+        basic_auto_dps = calc_damage_after_def(raw_base_auto, tgt.phys_def, phys_pierce) * auto_common_mult + proc_dmg_per_hit * aps + companion_dps
+        guillotine_dps = calc_damage_after_def(raw_guillotine, tgt.phys_def, phys_pierce) * auto_common_mult
+        colossus_dps = calc_damage_after_def(raw_colossus, tgt.phys_def, phys_pierce) * auto_common_mult
+        dps_breakdown: Dict[str, float] = {
+            "Basic Auto-Attack": round(basic_auto_dps, 2),
+        }
+        if guillotine_dps > 0:
+            dps_breakdown["Sacred Guillotine Chain"] = round(guillotine_dps, 2)
+        if colossus_dps > 0:
+            dps_breakdown["Colossus Radiant Bash"] = round(colossus_dps, 2)
+    else:
+        dps_breakdown: Dict[str, float] = {"Auto-Attack (+Procs)": round(auto_dps, 2)}
     total_skill_dps = 0.0
 
     # Wicked Necromancer: 3 Black Cat Summons inheriting player ASPD, M.CRIT, Dark element, and Summon DMG%
@@ -754,29 +830,35 @@ def evaluate_dps(
         archer_crit_factor = 1.0 + archer_crit_rate * (crit_mult - 1.0)
 
         # Black Cat Knight: 1.0 ATK auto + Taunt (INT>=100: 1.5 ATK / 5s) + Hook (INT>=200: 2.5 MATK / 10s)
-        knight_phys_raw = total_atk * (aps + (1.5 / 5.0 if tot_int >= 100 else 0.0))
-        knight_phys_dps = calc_damage_after_def(knight_phys_raw, tgt.phys_def, phys_pierce) * dark_elem_mult * cat_mcrit_factor * summon_mult
-        knight_hook_dps = 0.0
-        if tot_int >= 200:
-            knight_hook_dps = calc_damage_after_def(total_matk * (2.5 / 10.0), tgt.magic_def, magic_pierce) * dark_elem_mult * cat_mcrit_factor * summon_mult
-        knight_total_dps = knight_phys_dps + knight_hook_dps
+        if not _is_skill_disabled("blackcatknight", "Black Cat Knight"):
+            knight_phys_raw = total_atk * (aps + (1.5 / 5.0 if tot_int >= 100 else 0.0))
+            knight_phys_dps = calc_damage_after_def(knight_phys_raw, tgt.phys_def, phys_pierce) * dark_elem_mult * cat_mcrit_factor * summon_mult
+            knight_hook_dps = 0.0
+            if tot_int >= 200:
+                knight_hook_dps = calc_damage_after_def(total_matk * (2.5 / 10.0), tgt.magic_def, magic_pierce) * dark_elem_mult * cat_mcrit_factor * summon_mult
+            knight_total_dps = knight_phys_dps + knight_hook_dps
+            dps_breakdown["Black Cat Knight"] = round(knight_total_dps, 2)
+            total_skill_dps += knight_total_dps
 
         # Black Cat Archer: 1.0 (+2.1 Shadow Shot at INT>=200) * ATK * aps + Shadow Piercing (INT>=300: 20.0 ATK / 5s)
-        archer_shot_scale = 1.0 + (2.1 if tot_int >= 200 else 0.0)
-        archer_raw = total_atk * (archer_shot_scale * aps + (20.0 / 5.0 if tot_int >= 300 else 0.0))
-        archer_total_dps = calc_damage_after_def(archer_raw, tgt.phys_def, phys_pierce) * dark_elem_mult * archer_crit_factor * summon_mult
+        if not _is_skill_disabled("blackcatarcher", "Black Cat Archer"):
+            archer_shot_scale = 1.0 + (2.1 if tot_int >= 200 else 0.0)
+            archer_raw = total_atk * (archer_shot_scale * aps + (20.0 / 5.0 if tot_int >= 300 else 0.0))
+            archer_total_dps = calc_damage_after_def(archer_raw, tgt.phys_def, phys_pierce) * dark_elem_mult * archer_crit_factor * summon_mult
+            dps_breakdown["Black Cat Archer"] = round(archer_total_dps, 2)
+            total_skill_dps += archer_total_dps
 
         # Black Cat Cleric: cast 4s / 3s / 2s / 1s (INT 0/100/200/300), looping Vortex(12x) -> Meteor(12x) -> Mend(heal)
-        cleric_cast_sec = 1.0 if tot_int >= 300 else (2.0 if tot_int >= 200 else (3.0 if tot_int >= 100 else 4.0))
-        cleric_matk_per_sec = total_matk * (24.0 / (3.0 * cleric_cast_sec))
-        cleric_total_dps = calc_damage_after_def(cleric_matk_per_sec, tgt.magic_def, magic_pierce) * dark_elem_mult * cat_mcrit_factor * summon_mult
-
-        dps_breakdown["Black Cat Knight"] = round(knight_total_dps, 2)
-        dps_breakdown["Black Cat Archer"] = round(archer_total_dps, 2)
-        dps_breakdown["Black Cat Cleric"] = round(cleric_total_dps, 2)
-        total_skill_dps += knight_total_dps + archer_total_dps + cleric_total_dps
+        if not _is_skill_disabled("blackcatcleric", "Black Cat Cleric"):
+            cleric_cast_sec = 1.0 if tot_int >= 300 else (2.0 if tot_int >= 200 else (3.0 if tot_int >= 100 else 4.0))
+            cleric_matk_per_sec = total_matk * (24.0 / (3.0 * cleric_cast_sec))
+            cleric_total_dps = calc_damage_after_def(cleric_matk_per_sec, tgt.magic_def, magic_pierce) * dark_elem_mult * cat_mcrit_factor * summon_mult
+            dps_breakdown["Black Cat Cleric"] = round(cleric_total_dps, 2)
+            total_skill_dps += cleric_total_dps
 
     for sk in cls.skills:
+        if _is_skill_disabled("", sk.name):
+            continue
         eff_elem = (
             (gear.weapon_coating or "neutral").lower()
             if (sk.uses_weapon_coating and sk.element == "neutral")
@@ -934,12 +1016,12 @@ def evaluate_dps(
         "stat_sources": {
             "base": {s: int(stats_map.get(s, 1)) for s in ALL_STATS},
             "job": {s: int(cls.job_bonuses.get(s, 0)) for s in ALL_STATS},
-            "innate": {s: int(cls.innate_stats.get(s, 0)) for s in ALL_STATS},
+            "innate": {s: int(effective_innate_stats.get(s, 0)) for s in ALL_STATS},
             "gear": {s: int(gear.bonus_stats.get(s, 0)) for s in ALL_STATS},
             "cards": {s: int(card_acc.get(f"stat_{s}", 0.0)) for s in ALL_STATS},
             "sets": {s: int(set_acc.get(f"stat_{s}", 0.0)) for s in ALL_STATS},
             "passives": {
-                s: int(passive_acc.get(f"stat_{s}", 0.0)) - int(cls.innate_stats.get(s, 0))
+                s: int(passive_acc.get(f"stat_{s}", 0.0)) - int(effective_innate_stats.get(s, 0))
                 for s in ALL_STATS
             },
         },
@@ -2277,6 +2359,7 @@ def _resolve_target_profile(
     target_flee: Optional[int] = None,
     target_element: Optional[str] = None,
     is_pvp: Optional[bool] = None,
+    is_party: Optional[bool] = None,
 ) -> TargetProfile:
     """Resolves TargetProfile from MONSTER_PRESETS, SQLite monsters, and field overrides."""
     legacy_preset_aliases = {
@@ -2324,6 +2407,8 @@ def _resolve_target_profile(
         tgt_base.element = target_element.lower()
     if is_pvp is not None:
         tgt_base.is_monster = not bool(is_pvp)
+    if is_party is not None:
+        tgt_base.is_party = bool(is_party)
     return tgt_base
 
 
@@ -2332,7 +2417,7 @@ def optimize_build_api(
     level: int = 120,
     refine_level: int = 4,
     affix_budget: str = "high",
-    weapon_coating: Optional[str] = "light",
+    weapon_coating: Optional[str] = None,
     is_two_handed: Optional[bool] = None,
     target_preset: str = "Boss Dummy (MvP)",
     target_def: Optional[int] = None,
@@ -2340,6 +2425,7 @@ def optimize_build_api(
     target_flee: Optional[int] = None,
     target_element: Optional[str] = None,
     is_pvp: Optional[bool] = None,
+    is_party: Optional[bool] = None,
     unlocked_passives: Optional[List[str]] = None,
     card_tier_filter: str = "all",
     top_n: int = 5,
@@ -2386,6 +2472,8 @@ def optimize_build_api(
                 is_pvp = bool(ct["is_pvp"])
             elif "is_monster" in ct:
                 is_pvp = not bool(ct["is_monster"])
+            if "is_party" in ct:
+                is_party = bool(ct["is_party"])
 
     jobs_cat, passives_cat, sets_cat, cards_cat = build_runtime_catalog(db_meta)
 
@@ -2446,6 +2534,7 @@ def optimize_build_api(
         target_flee=target_flee,
         target_element=target_element,
         is_pvp=is_pvp,
+        is_party=is_party,
     )
 
     total_pts = total_stat_points(level)
@@ -2730,24 +2819,27 @@ def optimize_build_api(
         ring_choice_info=ring_info,
     )
 
-    # Compare coated vs uncoated build DPS for synergy insights (with cards & identical gear stats)
-    uncoated_gear = _apply_gear_stats_dict(
-        get_default_gear_for_job(
-            jid,
-            affix_budget=affix_budget,
-            weapon_coating=None,
-            refine_level=refine_level,
-            is_two_handed=is_two_handed,
-        ),
-        best_gear.bonus_stats,
+    # Compare Light-enchanted vs unenchanted build DPS for Eclipse / Dark-boss synergy insights
+    light_gear = replace(best_gear, weapon_coating="light")
+    uncoated_gear = replace(best_gear, weapon_coating=None)
+    light_eval = (
+        best_eval
+        if (best_gear.weapon_coating or "").lower() == "light"
+        else evaluate_dps(
+            best_stats, best_p, best_s, cls, light_gear, tgt_base,
+            cards_loadout=best_card_objs, passives_catalog=passives_cat, sets_catalog=sets_cat,
+        )
     )
-    uncoated_gear.level = level
-    uncoated_eval = evaluate_dps(
-        best_stats, best_p, best_s, cls, uncoated_gear, tgt_base,
-        cards_loadout=best_card_objs, passives_catalog=passives_cat, sets_catalog=sets_cat,
+    uncoated_eval = (
+        best_eval
+        if best_gear.weapon_coating is None
+        else evaluate_dps(
+            best_stats, best_p, best_s, cls, uncoated_gear, tgt_base,
+            cards_loadout=best_card_objs, passives_catalog=passives_cat, sets_catalog=sets_cat,
+        )
     )
     coating_gain_pct = round(
-        ((best_eval["total_dps"] - uncoated_eval["total_dps"]) / max(1.0, uncoated_eval["total_dps"])) * 100.0,
+        ((light_eval["total_dps"] - uncoated_eval["total_dps"]) / max(1.0, uncoated_eval["total_dps"])) * 100.0,
         2,
     )
 
@@ -2795,7 +2887,7 @@ def optimize_build_api(
         },
         "coating_comparison": {
             "active_coating": best_gear.weapon_coating,
-            "coated_dps": best_eval["total_dps"],
+            "coated_dps": light_eval["total_dps"],
             "uncoated_dps": uncoated_eval["total_dps"],
             "light_coating_gain_pct": coating_gain_pct,
         },
@@ -2846,12 +2938,14 @@ def evaluate_build_api(
     passives: Optional[Sequence[str]] = None,
     armor_sets: Optional[Sequence[str]] = None,
     cards_by_slot: Optional[Dict[str, Optional[str]]] = None,
+    disabled_skills: Optional[Sequence[str]] = None,
     target_preset: str = "tier6_dark_boss",
     target_def: Optional[int] = None,
     target_mdef: Optional[int] = None,
     target_flee: Optional[int] = None,
     target_element: Optional[str] = None,
     is_pvp: Optional[bool] = None,
+    is_party: Optional[bool] = None,
     db_meta: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
@@ -2866,7 +2960,7 @@ def evaluate_build_api(
 
     gm = dict(gear_mods or {})
     refine_level = int(gm.get("weapon_refine", gm.get("refine_level", 4)))
-    coating = gm.get("weapon_coating", "light")
+    coating = gm.get("weapon_coating", None)
     is_2h = gm.get("is_two_handed", cls.is_two_handed)
     gear = get_default_gear_for_job(
         jid,
@@ -2935,6 +3029,7 @@ def evaluate_build_api(
         target_flee=target_flee,
         target_element=target_element,
         is_pvp=is_pvp,
+        is_party=is_party,
     )
 
     # Resolve 10-slot card loadout
@@ -2980,9 +3075,52 @@ def evaluate_build_api(
         if raw_s
     ]
 
+    # Resolve disabled skill tokens (expanding DB skill IDs to names for SkillSpec matching)
+    skill_id_to_name: Dict[str, str] = {}
+    if isinstance(db_meta, dict):
+        for raw_sk in db_meta.get("skills") or ():
+            if isinstance(raw_sk, dict) and raw_sk.get("id") and raw_sk.get("name"):
+                skill_id_to_name[str(raw_sk["id"]).strip().lower()] = str(raw_sk["name"])
+    resolved_disabled: List[str] = []
+    for tok in (disabled_skills or ()):
+        s_tok = str(tok).strip()
+        if not s_tok:
+            continue
+        resolved_disabled.append(s_tok)
+        mapped_name = skill_id_to_name.get(s_tok.lower())
+        if mapped_name:
+            resolved_disabled.append(mapped_name)
+
     ev = evaluate_dps(
         clean_base, resolved_passives, resolved_sets, cls, gear, tgt_base,
         cards_loadout=chosen_cards, passives_catalog=passives_cat, sets_catalog=sets_cat,
+        disabled_skills=resolved_disabled,
+    )
+
+    # Light-enchant vs unenchanted A/B comparison on exact current user loadout (for Eclipse / Dark Boss check)
+    light_gear = replace(gear, weapon_coating="light")
+    uncoated_gear = replace(gear, weapon_coating=None)
+    light_eval = (
+        ev
+        if (gear.weapon_coating or "").lower() == "light"
+        else evaluate_dps(
+            clean_base, resolved_passives, resolved_sets, cls, light_gear, tgt_base,
+            cards_loadout=chosen_cards, passives_catalog=passives_cat, sets_catalog=sets_cat,
+            disabled_skills=resolved_disabled,
+        )
+    )
+    uncoated_eval = (
+        ev
+        if gear.weapon_coating is None
+        else evaluate_dps(
+            clean_base, resolved_passives, resolved_sets, cls, uncoated_gear, tgt_base,
+            cards_loadout=chosen_cards, passives_catalog=passives_cat, sets_catalog=sets_cat,
+            disabled_skills=resolved_disabled,
+        )
+    )
+    eval_coating_gain = round(
+        ((light_eval["total_dps"] - uncoated_eval["total_dps"]) / max(1.0, uncoated_eval["total_dps"])) * 100.0,
+        2,
     )
 
     thresholds: List[str] = []
@@ -3012,6 +3150,7 @@ def evaluate_build_api(
         "cards_by_slot": cards_detail,
         "passives": resolved_passives,
         "armor_sets": resolved_sets,
+        "disabled_skills": list(disabled_skills or ()),
         "points_spent": points_spent,
         "total_stat_points": total_pts,
         "points_remaining": total_pts - points_spent,
@@ -3019,6 +3158,12 @@ def evaluate_build_api(
         "active_thresholds": thresholds,
         "active_card_mechanics": ev.get("active_card_mechanics", []),
         "panel_stats": _build_panel_stats_dict(ev),
+        "coating_comparison": {
+            "active_coating": gear.weapon_coating,
+            "coated_dps": light_eval["total_dps"],
+            "uncoated_dps": uncoated_eval["total_dps"],
+            "light_coating_gain_pct": eval_coating_gain,
+        },
     }
 
 

@@ -1878,7 +1878,7 @@ JOB_REGISTRY: Dict[str, ClassProfile] = {
 def get_default_gear_for_job(
     job_id: str,
     affix_budget: str = "high",
-    weapon_coating: Optional[str] = "light",
+    weapon_coating: Optional[str] = None,
     refine_level: int = 4,
     is_two_handed: Optional[bool] = None,
 ) -> GearProfile:

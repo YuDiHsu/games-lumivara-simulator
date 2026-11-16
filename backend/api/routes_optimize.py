@@ -22,7 +22,7 @@ class OptimizePayload(BaseModel):
     job_id: str = "templar"
     level: int = 120
     unlocked_passives: Optional[List[str]] = None
-    weapon_coating: Optional[str] = "light"
+    weapon_coating: Optional[str] = None
     refine_level: Optional[int] = None
     is_two_handed: Optional[bool] = None
     affix_budget: str = "high"
@@ -53,6 +53,7 @@ class EvaluatePayload(BaseModel):
     passives: Optional[List[str]] = None
     armor_sets: Optional[List[str]] = None
     cards_by_slot: Optional[Dict[str, Optional[str]]] = None
+    disabled_skills: Optional[List[str]] = None
     target_preset: str = "tier6_dark_boss"
     target: Optional[Dict[str, Any]] = None
     custom_target: Optional[Dict[str, Any]] = None
@@ -107,7 +108,7 @@ def _normalize_optimize_params(payload: OptimizePayload) -> Dict[str, Any]:
     # Resolve gear parameters (supporting both flat fields and nested `gear` object)
     fe_gear = data.get("gear")
     if isinstance(fe_gear, dict):
-        params["weapon_coating"] = fe_gear.get("weapon_coating", data.get("weapon_coating", "light"))
+        params["weapon_coating"] = fe_gear.get("weapon_coating", data.get("weapon_coating", None))
         raw_ref = fe_gear.get("weapon_refine", fe_gear.get("refine_level", data.get("refine_level")))
         params["refine_level"] = int(raw_ref if raw_ref is not None else 4)
         params["is_two_handed"] = fe_gear.get("is_two_handed", data.get("is_two_handed"))
@@ -133,7 +134,7 @@ def _normalize_optimize_params(payload: OptimizePayload) -> Dict[str, Any]:
         else:
             params["custom_gear"] = data["custom_gear"]
     else:
-        params["weapon_coating"] = data.get("weapon_coating", "light")
+        params["weapon_coating"] = data.get("weapon_coating", None)
         params["refine_level"] = int(data.get("refine_level") if data.get("refine_level") is not None else 4)
         params["is_two_handed"] = data.get("is_two_handed")
         params["custom_gear"] = data.get("custom_gear")
@@ -162,6 +163,8 @@ def _apply_target_override(params: Dict[str, Any], tgt_override: Optional[Dict[s
         params["is_pvp"] = bool(tgt_override["is_pvp"])
     elif "is_monster" in tgt_override:
         params["is_pvp"] = not bool(tgt_override["is_monster"])
+    if "is_party" in tgt_override:
+        params["is_party"] = bool(tgt_override["is_party"])
 
 
 @router.post("/optimize")
@@ -221,6 +224,7 @@ def run_evaluation(payload: EvaluatePayload) -> Dict[str, Any]:
         "passives": data.get("passives") or [],
         "armor_sets": data.get("armor_sets") or [],
         "cards_by_slot": data.get("cards_by_slot") or {},
+        "disabled_skills": data.get("disabled_skills") or [],
         "target_preset": data.get("target_preset") or "tier6_dark_boss",
     }
     tgt_override = data.get("custom_target") or (data.get("target") if isinstance(data.get("target"), dict) else None)

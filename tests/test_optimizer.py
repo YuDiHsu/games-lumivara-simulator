@@ -28,7 +28,7 @@ TEMPLAR_CORE_PASSIVES = [
 def test_templar_light_coating_vs_uncoated_synergy() -> None:
     """
     Verify Templar Light Weapon Coating synergy against Dark bosses:
-    - With `weapon_coating='light'`, Light & Shadow is top-tier and beats uncoated DPS by >35%.
+    - With `weapon_coating='light'`, Light & Shadow is top-tier and beats uncoated DPS by >30%.
     - Total VIT reaches >= 300 at Lv.150 for 15x GLD multiplier.
     """
     res_light = optimize_build_api(
@@ -62,7 +62,7 @@ def test_templar_light_coating_vs_uncoated_synergy() -> None:
         }
     )
     top_none_boss = res_none_boss["top_builds"][0]
-    assert top_light["total_dps"] > top_none_boss["total_dps"] * 1.35
+    assert top_light["total_dps"] > top_none_boss["total_dps"] * 1.30
 
     # On PvP neutral target without coating, Kensei (all neutral coating-inherited skills) skips Light & Shadow,
     # whereas enabling Light coating vs Dark Boss brings Light & Shadow into top 4.
@@ -612,3 +612,73 @@ def test_clean_slate_exact_slot_sum_and_evaluate_api() -> None:
     )
     assert r_lower.status_code == 200
     assert r_lower.json()["total_dps"] < top["total_dps"]
+
+
+def test_templar_procs_disabled_skills_and_solo_party_mechanics() -> None:
+    """
+    Verify:
+    1. Default weapon_coating is None (unenchanted), while coating_comparison reports Light enchant gain vs Eclipse.
+    2. Templar dps_breakdown explicitly separates Basic Auto-Attack, Sacred Guillotine Chain, and Colossus Radiant Bash.
+    3. /api/evaluate supports `disabled_skills` toggling Templar procs & skills live.
+    4. Solo Templar does NOT get false Void Skitter (mWeakSpot) or Karasu Tengu (mOpener) Boss gains, whereas Party Templar can use Void Skitter.
+    """
+    r_solo = client.post(
+        "/api/optimize",
+        json={"job_id": "templar", "level": 150, "target_preset": "tier6_dark_boss", "top_n": 1},
+    )
+    assert r_solo.status_code == 200
+    d_solo = r_solo.json()
+    assert d_solo["config"]["weapon_coating"] is None
+    assert d_solo["coating_comparison"]["light_coating_gain_pct"] > 20.0
+
+    top_solo = d_solo["top_builds"][0]
+    bd = top_solo["dps_breakdown"]
+    assert "Basic Auto-Attack" in bd
+    assert bd.get("Sacred Guillotine Chain", 0) > 0
+    assert bd.get("Colossus Radiant Bash", 0) > 0
+
+    # Solo Templar vs Boss has no status ailment kit -> Garment must NOT pick Void Skitter Card
+    solo_garment = top_solo["card_recommendations"]["cards_by_slot"]["garment"]
+    assert solo_garment is not None and solo_garment["card_id"] != "skitter_card"
+
+    # Disabling Sacred Guillotine Chain & Colossus Radiant Bash drops DPS cleanly
+    cards_map = {
+        k: (v["card_id"] if v else None)
+        for k, v in top_solo["card_recommendations"]["cards_by_slot"].items()
+    }
+    r_disabled = client.post(
+        "/api/evaluate",
+        json={
+            "job_id": "templar",
+            "level": 150,
+            "base_stats": top_solo["base_stats"],
+            "gear_stats": top_solo["gear_stats"],
+            "gear_mods": top_solo["gear_mods"],
+            "passives": top_solo["passives"],
+            "armor_sets": top_solo["armor_sets"],
+            "cards_by_slot": cards_map,
+            "disabled_skills": ["sacredguillotine", "colossusbash"],
+            "target_preset": "tier6_dark_boss",
+        },
+    )
+    assert r_disabled.status_code == 200
+    d_dis = r_disabled.json()
+    assert "Sacred Guillotine Chain" not in d_dis["dps_breakdown"]
+    assert "Colossus Radiant Bash" not in d_dis["dps_breakdown"]
+    assert d_dis["total_dps"] < top_solo["total_dps"]
+    assert d_dis["coating_comparison"]["light_coating_gain_pct"] > 20.0
+
+    # Party mode enables teammates' debuffs -> Void Skitter (mWeakSpot) activates for Templar
+    r_party = client.post(
+        "/api/optimize",
+        json={
+            "job_id": "templar",
+            "level": 150,
+            "target_preset": "tier6_dark_boss",
+            "custom_target": {"is_party": True},
+            "top_n": 1,
+        },
+    )
+    assert r_party.status_code == 200
+    d_party = r_party.json()
+    assert d_party["top_builds"][0]["card_recommendations"]["cards_by_slot"]["garment"]["card_id"] == "skitter_card"

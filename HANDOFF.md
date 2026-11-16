@@ -14,10 +14,10 @@
   3. **React + Vite + Tailwind CSS 互動分析儀表板（`frontend/src/`）**：
      * 採用復古手抄本羊皮紙與墨色風格（`#F5F0E6` / `#FAF6EE`），支援後端離線時以 [wikiFallbackData.ts](file:///d:/Apps/PyProject/lumivara/frontend/src/api/wikiFallbackData.ts) 與 [client.ts](file:///d:/Apps/PyProject/lumivara/frontend/src/api/client.ts) 本地演算完整運作。
      * 頂部 **CDC 改版異動通知列（`CdcBanner.tsx`）**：顯示更新摘要、雜湊狀態，提供 `Sync Wiki Now` 與 `Simulate Balance Patch` 測試按鈕，並在同步後自動重新拉取 `/api/meta`。
-     * 頂部 **精簡控制列（`ControlPanel.tsx`）**：整合討伐目標預設、自訂 DEF/MDEF/FLEE、目標屬性、PvE/PvP 切換、依職業與 Wiki 繁體中文效果分組的 **跨職被動池** 選擇器，以及「立即計算最佳配裝」觸發鈕。
+     * 頂部 **精簡控制列（`ControlPanel.tsx`）**：整合討伐目標預設、自訂 DEF/MDEF/FLEE、目標屬性、PvE/PvP 切換、**單人 / 組隊（`is_party`）戰鬥模式切換**、依職業與 Wiki 繁體中文效果分組的 **跨職被動池** 選擇器，以及「立即計算最佳配裝」觸發鈕。
      * **Top 5 排行與統一互動紙娃娃模擬器（`BuildResultCard.tsx`, `EquipmentPaperdoll.tsx`, `CardPickerModal.tsx`, `BuildJsonModal.tsx`, `DpsCharts.tsx`）**：
-       * 中央整合 15 職業切換、Lv.1–150 等級調整、6 維基礎配點滑桿與 4/4 跨職被動微調。
-       * 10 部位裝備支援 **分部位階級 `I ~ VI` 混用**、雙 6 維屬性（依階級與 2H 規則動態限縮）、特別詞綴（由 `/api/meta` `equipment_affix_system` 動態載入各部位詞池）、全 10 部位原生白字屬性／飾品白字類型與數值滑桿、獨立 `HIT`/`FLEE`/`HP` 微調、單件防具套裝指派、武器精煉 `+0 ~ +10`／塗層與 Wiki 全文卡片搜尋選卡；微調後防抖呼叫 `/api/evaluate` 即時比較與基準配裝的 DPS 落差，且於切換 PvE/PvP、討伐目標、被動池或卡片模式時保留所有自訂配置。
+       * 中央整合 15 職業切換、Lv.1–150 等級調整、6 維基礎配點滑桿、4/4 跨職被動微調與 **本職技能欄位選單（含推薦／可切換 `disabled_skills`）**。
+       * 10 部位裝備支援 **分部位階級 `I ~ VI` 混用**、雙 6 維屬性（依階級與 2H 規則動態限縮）、特別詞綴（由 `/api/meta` `equipment_affix_system` 動態載入各部位詞池）、全 10 部位原生白字屬性／飾品白字類型與數值滑桿、獨立 `HIT`/`FLEE`/`HP` 微調、單件防具套裝指派、武器精煉 `+0 ~ +10`／屬性附魔（預設「無附魔」，武器格與 DPS 圖表區同步「日蝕／聖附魔」開關）與 Wiki 全文卡片搜尋選卡（含單人／Boss 實戰風險提示）；微調後防抖呼叫 `/api/evaluate` 即時比較與基準配裝的 DPS 落差，且於切換 PvE/PvP、單人/組隊、討伐目標、被動池或卡片模式時保留所有自訂配置。
        * 支援 **`lumivara-build-v1` JSON 匯出／匯入**（剪貼簿複製、`.json` 檔案下載／上傳、防呆檢查與跨職業／等級自動切換還原）。
 
 ---
@@ -45,14 +45,30 @@
 ### 2.3 條件被動修正（`Twilight Equilibrium`）
 * `Twilight Equilibrium`（Acolyte 跨職被動）為「施放治療或增益後使下次攻擊技能傷害 `+20%`（`next_skill_dmg_pct`）」，於 `job_specs.py` 修正為不對純攻擊循環無條件套用常駐 `+20% skill_dmg_pct`，避免 **Mage** 等純輸出法系誤選。
 
+### 2.4 觸發技拆分與本職技能欄位開關（`disabled_skills`）
+* Templar 的 `Sacred Guillotine Chain`（每 5 次普攻觸發 4 段聖光鎖鏈）與 `Colossus Radiant Bash`（普攻 35% 機率觸發 115% ATK + 6% MaxHP）已由原先混入普攻改為獨立拆列於 `dps_breakdown`，並於紙娃娃模擬器「本職技能欄位 (含推薦)」與 `EvaluatePayload.disabled_skills` 支援即時勾選／停用主動技、普攻觸發技與固有被動（含 `Templar Mastery`）。
+
+### 2.5 武器附魔預設與單人／組隊卡片機制真實化（`is_party`）
+* **統一稱呼「附魔」與預設無附魔**：全站由「塗層」更名為「附魔」，全職業預設 `weapon_coating = None`（無附魔）；並使武器檢視格與 `DpsCharts.tsx` 的「日蝕（聖附魔）效益」開關皆綁定同一組 `simState.weapon_coating`（`coating_comparison` 亦同步納入 `evaluate_build_api` 與前端 `runLocalEvaluate`）。
+* **卡片實戰條件驗證**：新增 `TargetProfile.is_party`（`單人 / 組隊`）：
+  * `Void Skitter Card`（`mWeakSpot`：對異常狀態目標 `+12%`）：檢查該職業技能是否具備穩定異常狀態來源；無穩定 Debuff 來源的職業（如單人 Templar）於單人模式計為 `0%`，組隊模式才給折算協同增益。
+  * `Karasu Tengu Card`（`mOpener`：第一擊/高血量首擊加成）：高血量 Boss 戰於多人搶傷或持續戰（`is_party=True`）計為 `0%`，單人長戰僅採極低首擊比例。
+  * 同時於 `client.ts`（`getCardMechanicWarning`）與 `CardPickerModal.tsx` 補齊 `mCocoa`（對一般/Boss 怪 `-10%` 技傷）、`mSurprise`（持續輸出 0%）等機制說明與風險警示。
+
+### 2.6 ASPD 雙門檻與穿透甜蜜點實碼查核
+* **ASPD 雙門檻（對照實裝 JS `assets/jobs-D0vlQhz7.js` 與 `main-DsJe3pd1.js`）**：
+  * 攻速軟上限 `180` 折半計算、硬上限 `193`（對應最快間隔 `140ms`）；
+  * 遊戲本體實裝 `qn = { from: 170, perPoint: 0.015 }`（`basicFactor = 1 + max(0, finalAspd - 170) * 0.015`，屬於遊戲程式碼實裝但 Wiki 條目未寫出的隱藏普攻增傷）；已於 `DpsCharts.tsx` 分行清楚標示兩個門檻。
+* **DEF / MDEF 與穿透甜蜜點**：目標減傷率 $\min(255,\ \text{DEF或MDEF})/300$（上限 `85%`），暴擊不穿甲且溢出 `85%` 無負防增傷；刷圖日常區甜蜜點約 `50%–70%`，終局 Boss（如 `Tempest Drake` / `Eclipse Warlord` / `Regolith Golem` / `Fallen Seraph` 常見 200–255 防／魔防）與 PvP 甜蜜點為 `75%–85%`（`85%` 硬頂）。
+
 ---
 
 ## 3. 目前實測基準數據（Lv.150 vs `tier6_dark_boss` Eclipse Warlord）
 
-以下數據於最近一次完整修正後以 `optimize_build_api`（預設裝備參數、`card_tier_filter="standard_only"`，目標 DEF 255 / MDEF 240 / FLEE 500 / Dark）直接測得：
+以下數據以 `optimize_build_api`（預設裝備參數、`card_tier_filter="standard_only"`，目標 DEF 255 / MDEF 240 / FLEE 500 / Dark）在先前基準條件下測得（後續更新後預設值改為 `weapon_coating = None` 無附魔）：
 
-### 3.1 Templar（Lv.150 標竿與武器塗層對照）
-1. **常駐光屬性武器塗層（`weapon_coating = "light"`）**：
+### 3.1 Templar（Lv.150 標竿與武器附魔對照）
+1. **聖屬性附魔開啟（`weapon_coating = "light"`）**：
    * **總秒傷（Total DPS）**：**`4,120,285.73 DPS`**（普攻與連鎖 `254,719.64` + 技能 `3,865,566.09`）。
    * **基礎配點**：`STR 91 / AGI 61 / VIT 119 / INT 1 / DEX 31 / LUK 119`（含裝備與卡片總和：`STR 134 / AGI 100 / VIT 315 / DEX 61 / LUK 155`，`MaxHP 38,823`、`ASPD 182.9`、`HIT 100%`、物理穿透 **`54.0%`**、`GLD 25.0×`）。
    * **前端預設基準參數對比**：[App.tsx](file:///d:/Apps/PyProject/lumivara/frontend/src/App.tsx#L33-L63) 採用零額外穿透的純淨初始 `DEFAULT_GEAR`（`weapon_refine = 4`、`phys_pierce = 0`），實際由 10 部位紙娃娃與卡片加總獲得屬性，推薦與模擬 DPS 基準一致。
@@ -66,9 +82,9 @@
      * `shoes`：`Bog Toad Card`（`VIT +15`）
      * `accessory_1 / 2`：`Forest Wolf Card × 2`（共 `+4% P.Pierce`）
    * **雙物理戒指推薦**：`Piercing Obsidian Ring` × 2。
-2. **無塗層對照（`weapon_coating = None`）**：
-   * **總秒傷**：**`3,086,308.30 DPS`**（被動轉為 `Vigor + Sovereign Dividend Yield + Zanshin + Close-Combat Mastery`）。
-   * **光塗層增益**：**`+1,033,977.43 DPS`（`+33.50%`）**。
+2. **無附魔預設基準（`weapon_coating = None`）**：
+   * **總秒傷**：**`3,086,308.30 DPS`**（被動轉為 `Vigor + Sovereign Dividend Yield + Zanshin + Close-Combat Mastery`；後續另針對單人模式過濾 `Void Skitter Card` 並保留純無附魔基準）。
+   * **聖附魔增益**：**`+1,033,977.43 DPS`（`+33.50%`）**。
 
 ### 3.2 其他重點職業（Lv.150 / `standard_only`）
 * **The King（皇權雙修）**：**`1,317,759.52 DPS`**；基礎配點 `STR 107 / INT 107 / VIT 1 / DEX 64 / LUK 119 / AGI 17`（100% 鎖定 `STR == INT` 且無錯配 VIT）；被動 `['Mentality', 'Light & Shadow', 'Battle Momentum', 'Zanshin']`；套裝 `['Spell Breaker', 'Spell Breaker', 'Executioner']`；戒指 `Lethal Physical ATK Ring` + `Runic Emerald Ring`。
@@ -85,7 +101,7 @@
 # 1. 同步 Python 虛擬環境依賴
 uv sync
 
-# 2. 執行完整測試套件（目前 32/32 全數通過）
+# 2. 執行完整測試套件（目前 33/33 全數通過）
 uv run pytest -v
 
 # 3. 執行單機 CLI 秒傷最佳化驗證腳本

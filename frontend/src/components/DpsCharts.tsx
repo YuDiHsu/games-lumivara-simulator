@@ -11,11 +11,13 @@ import {
   Target,
   Zap,
 } from 'lucide-react';
-import { BuildCandidate, OptimizeResponse } from '../api/client';
+import { BuildCandidate, ElementType, OptimizeResponse } from '../api/client';
 
 interface DpsChartsProps {
   build: BuildCandidate;
   optimizeResult: OptimizeResponse;
+  simWeaponEnchant?: ElementType | null;
+  simCoatingComparison?: OptimizeResponse['coating_comparison'];
   onToggleLightCoating: (useLight: boolean) => void;
 }
 
@@ -30,10 +32,15 @@ const SLICE_COLORS = [
 export const DpsCharts: React.FC<DpsChartsProps> = ({
   build,
   optimizeResult,
+  simWeaponEnchant,
+  simCoatingComparison,
   onToggleLightCoating,
 }) => {
   const { combat_metrics: cm, skill_breakdown: skills } = build;
-  const { coating_comparison: cc, weapon_coating } = optimizeResult;
+  const activeEnchant =
+    simWeaponEnchant !== undefined ? simWeaponEnchant : optimizeResult.weapon_coating;
+  const cc = simCoatingComparison ?? optimizeResult.coating_comparison;
+  const isLightEnchantActive = activeEnchant === 'light';
 
   const radius = 58;
   const circumference = 2 * Math.PI * radius;
@@ -57,32 +64,32 @@ export const DpsCharts: React.FC<DpsChartsProps> = ({
             </p>
           </div>
 
-          {/* Coating A/B Comparison Pill */}
+          {/* Eclipse / Light Weapon Enchant A/B Comparison & Unified Toggle */}
           <div className="flex items-center gap-2.5 bg-[#F5F0E6] px-3 py-1.5 rounded-md border border-[#D3C6B0] text-xs">
             <Flame className="w-4 h-4 text-[#9A6B22] shrink-0" />
             <div>
               <div className="text-[#1E1914] font-medium">
-                光塗層效益：
+                日蝕（聖附魔）效益：
                 <strong className="text-[#2D6A4F] font-mono">
                   {cc.gain_pct >= 0 ? '+' : ''}
                   {cc.gain_pct.toFixed(1)}% DPS
                 </strong>
               </div>
               <div className="text-[11px] font-mono text-[#5C4E3C]">
-                有塗層 {Math.round(cc.with_light_coating_dps).toLocaleString()} / 無塗層{' '}
+                聖附魔 {Math.round(cc.with_light_coating_dps).toLocaleString()} / 無附魔{' '}
                 {Math.round(cc.without_coating_dps).toLocaleString()}
               </div>
             </div>
             <button
               type="button"
-              onClick={() => onToggleLightCoating(weapon_coating !== 'light')}
+              onClick={() => onToggleLightCoating(!isLightEnchantActive)}
               className={`ml-1 px-2.5 py-1 rounded text-[11px] font-medium border transition cursor-pointer ${
-                weapon_coating === 'light'
+                isLightEnchantActive
                   ? 'bg-[#9A6B22] border-[#9A6B22] text-[#FAF6EE]'
                   : 'bg-[#EDE5D5] border-[#C5B69D] text-[#1E1914] hover:bg-[#E4D9C4]'
               }`}
             >
-              {weapon_coating === 'light' ? '切換無塗層' : '啟用光塗層'}
+              {isLightEnchantActive ? '切換無附魔' : '模擬日蝕聖附魔'}
             </button>
           </div>
         </div>
@@ -319,9 +326,18 @@ export const DpsCharts: React.FC<DpsChartsProps> = ({
               </div>
             </div>
 
-            <div className="mt-1.5 pt-1.5 border-t border-[#D3C6B0] text-[11px] text-[#5C4E3C]">
-              受基礎武器、AGI/DEX、ASPD% 與單張最高攻速卡影響；超過 170 每點普攻{' '}
-              <strong className="text-[#2D6A4F]">+1.5%</strong> (目前 +{cm.high_aspd_basic_bonus_pct.toFixed(1)}%)
+            <div className="mt-1.5 pt-1.5 border-t border-[#D3C6B0] text-[11px] text-[#5C4E3C] space-y-0.5">
+              <div>
+                攻速規則：超過 <strong>180</strong> 部分折半計算，硬上限 <strong>193</strong>（僅取單張最高 ASPD 卡）
+              </div>
+              <div>
+                高攻速增傷：最終 ASPD 超過 <strong>170</strong> 每點普攻{' '}
+                <strong className="text-[#2D6A4F]">+1.5%</strong>（目前{' '}
+                {cm.aspd > 170
+                  ? `(${cm.aspd.toFixed(1)}−170)×1.5% = +${cm.high_aspd_basic_bonus_pct.toFixed(1)}%`
+                  : '+0.0%'}
+                ，193 滿速 +34.5%）
+              </div>
             </div>
           </div>
         </div>

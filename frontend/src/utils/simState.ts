@@ -105,6 +105,7 @@ export interface SimState {
   weapon_refine: number;
   weapon_coating: ElementType | null;
   passives: string[];
+  disabled_skills: string[];
   armor_sets: string[];
   slot_armor_sets: Record<string, string>;
   baseline_slot_armor_sets: Record<string, string>;
@@ -486,13 +487,13 @@ export function getRingBaseOptionsForTier(tier: number): Array<{
 }
 
 export const COATING_OPTIONS: Array<{ value: ElementType | null; label: string }> = [
-  { value: null, label: '無塗層' },
-  { value: 'light', label: '聖屬性 (Light)' },
-  { value: 'dark', label: '暗屬性 (Dark)' },
-  { value: 'fire', label: '火屬性 (Fire)' },
-  { value: 'water', label: '水屬性 (Water)' },
-  { value: 'wind', label: '風屬性 (Wind)' },
-  { value: 'earth', label: '地屬性 (Earth)' },
+  { value: null, label: '無附魔' },
+  { value: 'light', label: '聖屬性附魔 (Light)' },
+  { value: 'dark', label: '暗屬性附魔 (Dark)' },
+  { value: 'fire', label: '火屬性附魔 (Fire)' },
+  { value: 'water', label: '水屬性附魔 (Water)' },
+  { value: 'wind', label: '風屬性附魔 (Wind)' },
+  { value: 'earth', label: '地屬性附魔 (Earth)' },
 ];
 
 const DEFAULT_PAPERDOLL_SLOTS = [
@@ -807,6 +808,7 @@ export function buildInitialSimState(
     weapon_refine: resolvedRefine,
     weapon_coating: resolvedCoating,
     passives: benchmarkBuild.passives.map((p) => p.id),
+    disabled_skills: [],
     armor_sets: allArmorSets.length > 0 ? summarizeEquippedArmorSets(slot_armor_sets, allArmorSets).activeCombo : normalizedCombo,
     slot_armor_sets: { ...slot_armor_sets },
     baseline_slot_armor_sets: { ...slot_armor_sets },
@@ -959,6 +961,7 @@ export function deriveEvaluateArgs(
     passives: [...simState.passives],
     armor_sets: resolvedArmorSets,
     cards_by_slot: { ...simState.cards_by_slot },
+    disabled_skills: [...(simState.disabled_skills || [])],
   };
 }
 
@@ -991,6 +994,7 @@ export interface LumivaraBuildExportV1 {
   weapon_refine: number;
   weapon_coating: ElementType | null;
   passives: string[];
+  disabled_skills?: string[];
   slot_armor_sets: Record<string, string>;
   cards_by_slot: Record<string, string | null>;
   slot_gear: Record<string, SlotGearExportEntry>;
@@ -1061,6 +1065,7 @@ export function exportSimBuildToJsonObj(
     weapon_refine: Math.max(0, Math.min(10, Math.round(simState.weapon_refine))),
     weapon_coating: simState.weapon_coating ?? null,
     passives: [...simState.passives].slice(0, 4),
+    disabled_skills: [...(simState.disabled_skills || [])],
     slot_armor_sets,
     cards_by_slot: { ...simState.cards_by_slot },
     slot_gear,
@@ -1193,6 +1198,10 @@ export function parseAndValidateBuildImport(
     };
   }
 
+  const disabled_skills = Array.isArray(obj.disabled_skills)
+    ? obj.disabled_skills.filter((s): s is string => typeof s === 'string' && s.trim().length > 0)
+    : [];
+
   return {
     ok: true,
     targetJob,
@@ -1207,6 +1216,7 @@ export function parseAndValidateBuildImport(
       weapon_refine,
       weapon_coating,
       passives,
+      disabled_skills,
       slot_armor_sets,
       cards_by_slot,
       slot_gear,
@@ -1368,6 +1378,7 @@ export function applyImportedBuildToSimState(
       weapon_refine: Math.max(0, Math.min(10, Math.round(payload.weapon_refine))),
       weapon_coating: payload.weapon_coating ?? null,
       passives,
+      disabled_skills: [...(payload.disabled_skills || [])],
       armor_sets: resolvedSets,
       slot_armor_sets,
       cards_by_slot,

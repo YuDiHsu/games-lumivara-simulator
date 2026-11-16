@@ -47,6 +47,14 @@ export interface SkillMeta {
   description: string;
 }
 
+export interface JobSkillSlotItem {
+  id: string;
+  name: string;
+  zh_name: string;
+  skill_type: 'active' | 'passive';
+  description: string;
+}
+
 export interface JobMeta {
   id: string;
   name: string;
@@ -69,6 +77,7 @@ export interface JobMeta {
   auto_hp_scale: number;
   hp_bonus_pct: number;
   sp_bonus_pct: number;
+  max_job_level?: number;
   job_bonuses: Record<string, number>;
   innate_stats: Record<string, number>;
   innate_passive_name: string;
@@ -76,6 +85,7 @@ export interface JobMeta {
   innate_class_passives?: string[];
   active_stats: string[];
   skills: SkillMeta[];
+  job_skills?: JobSkillSlotItem[];
 }
 
 export interface PassiveMeta {
@@ -363,6 +373,86 @@ export interface TargetInput {
   target_flee: number;
   element: ElementType;
   is_monster: boolean;
+  is_party?: boolean;
+}
+
+export const PERSISTENT_STATUS_JOBS = new Set([
+  'mamushi',
+  'thief',
+  'nekobaku',
+  'mage',
+  'swordman',
+  'ironfist',
+]);
+export const MOB_CC_STATUS_JOBS = new Set([
+  'kensei',
+  'archer',
+  'king',
+  'sinister',
+  'necromancer',
+  'merchant',
+]);
+
+export function getCardMechanicWarning(
+  card: CardMeta,
+  ctx: {
+    jobId: string;
+    isMelee: boolean;
+    isParty?: boolean;
+    isMonster?: boolean;
+    targetName?: string;
+    targetDef?: number;
+  }
+): string | null {
+  const mechs = new Set<string>(card.mechanics || []);
+  for (const k of Object.keys(card.bonuses || {})) {
+    if (k.startsWith('m') && Number(card.bonuses[k]) > 0 && !['mdef', 'matk', 'matk_pct', 'mcrit', 'max_hp'].includes(k)) {
+      mechs.add(k);
+    }
+  }
+  if (mechs.size === 0) return null;
+
+  const isMonster = ctx.isMonster ?? true;
+  const isParty = Boolean(ctx.isParty);
+  const tName = (ctx.targetName || '').toLowerCase();
+  const isBoss =
+    tName.includes('boss') ||
+    tName.includes('mvp') ||
+    tName.includes('leader') ||
+    (ctx.targetDef ?? 0) >= 150;
+
+  if (!isMonster) {
+    return '機制效果僅對怪物有效（PvP 不觸發）';
+  }
+  if (mechs.has('mWeakSpot')) {
+    if (!isParty && !PERSISTENT_STATUS_JOBS.has(ctx.jobId)) {
+      if (!isBoss && MOB_CC_STATUS_JOBS.has(ctx.jobId)) {
+        return '對 Boss 常駐度較低（需組隊或異常技）';
+      }
+      return '單人無異常狀態技能（僅組隊或搭配異常詞綴/卡觸發）';
+    }
+  }
+  if (mechs.has('mOpener')) {
+    if (isParty) {
+      return '組隊多人搶先手時無法觸發（僅單人刷怪有效）';
+    }
+    if (isBoss) {
+      return '僅第一下有效，長期打王幾乎無持續 DPS';
+    }
+  }
+  if (mechs.has('mFarShot') && ctx.isMelee) {
+    return '近戰職業（120px 內）觸發減傷 -10%';
+  }
+  if (mechs.has('mTitan') && !isBoss) {
+    return '打一般小怪反而減傷 -10%';
+  }
+  if (mechs.has('mSurprise')) {
+    return '需 6 秒完全不放技能才會觸發（連打無效益）';
+  }
+  if (mechs.has('mCocoa')) {
+    return '對怪物技能傷害 -10%（僅補師向）';
+  }
+  return null;
 }
 
 export interface OptimizeRequest {
@@ -384,6 +474,7 @@ export interface EvaluateRequest {
   passives: string[];
   armor_sets: string[];
   cards_by_slot: Record<string, string | null>;
+  disabled_skills?: string[];
   target: TargetInput;
 }
 
@@ -409,6 +500,7 @@ export interface EvaluateResponse {
   cards_by_slot: Record<string, CardSlotEntry | null>;
   passives: string[];
   armor_sets: string[];
+  disabled_skills?: string[];
   points_spent: number;
   total_stat_points: number;
   points_remaining: number;
@@ -417,6 +509,7 @@ export interface EvaluateResponse {
   active_card_mechanics: string[];
   combat_metrics: CombatMetrics;
   skill_breakdown: SkillDpsDetail[];
+  coating_comparison?: OptimizeResponse['coating_comparison'];
   computed_by: 'backend_api' | 'local_fallback_engine';
 }
 
@@ -959,6 +1052,42 @@ const PASSIVE_ZH_NAMES: Record<string, string> = {
   ankleclamp: '碰碰踝夾 (Poon-poon Ankle Clamp)',
 };
 
+export const SKILL_ZH_LABELS: Record<string, string> = {
+  'Basic Auto-Attack': '基礎普攻 (Basic Auto-Attack)',
+  'Auto-Attack (+Procs)': '普攻與連段觸發 (Auto-Attack)',
+  'Sacred Guillotine Chain': '聖斷鎖鏈 (Sacred Guillotine Chain)',
+  'Colossus Radiant Bash': '巨像聖擊 (Colossus Radiant Bash)',
+  'Templar Mastery': '聖殿騎士專精 (Templar Mastery)',
+  'Bastion Shield': '堡壘巨盾 (Bastion Shield)',
+  'Undying Dawn': '不滅晨曦 (Undying Dawn)',
+  'Shield Sacrificial Strike': '聖光奉獻盾擊 (Shield Sacrificial Strike)',
+  'Grand Light Devastation': '聖光毀滅裁決 (Grand Light Devastation)',
+  "Light's Embrace": "聖光牽引 (Light's Embrace)",
+  'Guardian Light Soul-Link': '守護者靈魂連結 (Guardian Light Soul-Link)',
+  'Light-Reflect Barrier': '聖光反射屏障 (Light-Reflect Barrier)',
+  sacredguillotine: '聖斷鎖鏈 (Sacred Guillotine Chain)',
+  colossusbash: '巨像聖擊 (Colossus Radiant Bash)',
+  templarmastery: '聖殿騎士專精 (Templar Mastery)',
+  bastionshield: '堡壘巨盾 (Bastion Shield)',
+  undyingdawn: '不滅晨曦 (Undying Dawn)',
+  sacrificestrike: '聖光奉獻盾擊 (Shield Sacrificial Strike)',
+  lightdevastation: '聖光毀滅裁決 (Grand Light Devastation)',
+  lightsembrace: "聖光牽引 (Light's Embrace)",
+  soullink: '守護者靈魂連結 (Guardian Light Soul-Link)',
+  lightbarrier: '聖光反射屏障 (Light-Reflect Barrier)',
+};
+
+export function getSkillZhLabel(idOrName: string, fallbackName?: string): string {
+  return (
+    SKILL_ZH_LABELS[idOrName] ??
+    SKILL_ZH_LABELS[idOrName.toLowerCase()] ??
+    (fallbackName ? SKILL_ZH_LABELS[fallbackName] : undefined) ??
+    PASSIVE_ZH_NAMES[idOrName.toLowerCase()] ??
+    fallbackName ??
+    idOrName
+  );
+}
+
 const ARMOR_SET_ZH_NAMES: Record<string, string> = {
   might: 'Warlord (戰神 2件套)',
   arcana: 'Archmage (大法師 2件套)',
@@ -1020,7 +1149,7 @@ const BONUS_KEY_ZH_LABELS: Record<string, string> = {
   sp_cost_red: 'SP 消耗',
   light_dark_dmg: '光/暗屬性傷害',
   elem_dmg: '元素傷害',
-  coated_dmg: '塗層增傷',
+  coated_dmg: '附魔增傷',
   double_hit_chance: '二連擊機率',
   lifesteal_pct: '吸血',
   dealt_cut_pct: '造成傷害變化',
@@ -1077,15 +1206,54 @@ function formatBonusMap(bonuses: Record<string, number | boolean>): string {
 function toSkillMeta(s: FallbackSkillSpec): SkillMeta {
   return {
     ...s,
-    zh_name: s.name,
+    zh_name: getSkillZhLabel(s.id, s.name),
   };
+}
+
+function buildFallbackJobSkills(j: FallbackJobSpec): JobSkillSlotItem[] {
+  const out: JobSkillSlotItem[] = [];
+  const seen = new Set<string>();
+  for (const s of j.skills || []) {
+    if (seen.has(s.id)) continue;
+    seen.add(s.id);
+    out.push({
+      id: s.id,
+      name: s.name,
+      zh_name: getSkillZhLabel(s.id, s.name),
+      skill_type: 'active',
+      description: s.description || '',
+    });
+  }
+  for (const pname of j.innate_class_passives || []) {
+    const pid = pname.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const knownId =
+      pid === 'templar_mastery' || pid === 'templarmastery'
+        ? 'templarmastery'
+        : pid.includes('sacredguillotine')
+        ? 'sacredguillotine'
+        : pid.includes('colossus')
+        ? 'colossusbash'
+        : pid;
+    if (seen.has(knownId)) continue;
+    seen.add(knownId);
+    out.push({
+      id: knownId,
+      name: pname,
+      zh_name: getSkillZhLabel(knownId, pname),
+      skill_type: 'passive',
+      description: `本職固有／可修習被動：${pname}`,
+    });
+  }
+  return out;
 }
 
 function toJobMeta(j: FallbackJobSpec): JobMeta {
   return {
     ...j,
     zh_name: JOB_ZH_LABELS[j.id] ?? j.name,
+    max_job_level: 70,
     skills: (j.skills || []).map(toSkillMeta),
+    job_skills: buildFallbackJobSkills(j),
   };
 }
 
@@ -1404,8 +1572,18 @@ export function evaluateBuildDps(
   level: number,
   gear: GearInput,
   target: TargetInput,
-  cardsLoadout: CardMeta[] = []
+  cardsLoadout: CardMeta[] = [],
+  disabledSkills: string[] = []
 ): RawEvalResult {
+  const disabledSet = new Set(disabledSkills.map((s) => s.trim().toLowerCase()).filter(Boolean));
+  const disabledNorm = new Set(Array.from(disabledSet).map((s) => s.replace(/[^a-z0-9]/g, '')));
+  const isSkillDisabled = (id: string, name = '') => {
+    if (disabledSet.size === 0) return false;
+    if (disabledSet.has(id.toLowerCase()) || (name && disabledSet.has(name.toLowerCase()))) return true;
+    const nId = id.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const nNm = name ? name.toLowerCase().replace(/[^a-z0-9]/g, '') : '';
+    return disabledNorm.has(nId) || (Boolean(nNm) && disabledNorm.has(nNm));
+  };
   const passiveMap = new Map<string, PassiveMeta>();
   for (const p of LIVE_PASSIVES_CACHE) {
     passiveMap.set(p.id, p);
@@ -1548,7 +1726,10 @@ export function evaluateBuildDps(
   if (activeMechanics.has('mQuake')) hasQuakeCard = true;
 
   const jb = job.job_bonuses || {};
-  const inn = job.innate_stats || {};
+  const inn =
+    job.id === 'templar' && isSkillDisabled('templarmastery', 'Templar Mastery')
+      ? {}
+      : job.innate_stats || {};
 
   const total_vit = (baseStats.vit ?? 1) + (jb.vit ?? 0) + (inn.vit ?? 0) + gear.vit + p.vit + c.vit;
   const total_str = (baseStats.str ?? 1) + (jb.str ?? 0) + (inn.str ?? 0) + gear.str + p.str + c.str;
@@ -1693,27 +1874,77 @@ export function evaluateBuildDps(
   if (auto_elem !== 'neutral') auto_elem_mult *= 1.0 + p.elem_dmg;
   if (gear.weapon_coating) auto_elem_mult *= 1.0 + p.coated_dmg;
 
-  // Card mechanics multiplicative damage bonuses (v2)
+  // Card mechanics multiplicative damage bonuses (matching backend optimizer.py)
   let cardMechMult = 1.0;
+  let cardSkillPenaltyMult = 1.0;
+  const isParty = Boolean(target.is_party);
+  const tLow = (target.name || '').toLowerCase();
+  const isBossTarget =
+    tLow.includes('boss') ||
+    tLow.includes('mvp') ||
+    tLow.includes('leader') ||
+    target.target_def >= 150;
+
   if (target.is_monster) {
     if (activeMechanics.has('mTitan')) {
-      const isMobPreset = target.preset_id?.includes('mob');
-      cardMechMult *= isMobPreset ? 0.9 : 1.25;
+      cardMechMult *= isBossTarget ? 1.25 : 0.9;
     }
-    if (activeMechanics.has('mSwarm')) cardMechMult *= 1.15;
-    if (activeMechanics.has('mCocoa')) cardMechMult *= 1.02;
+    if (activeMechanics.has('mExecute')) {
+      cardMechMult *= isParty ? 1.06 : 1.088;
+    }
+    if (activeMechanics.has('mOpener') && !isParty && !isBossTarget) {
+      cardMechMult *= 1.08;
+    }
+    if (activeMechanics.has('mWeakSpot')) {
+      if (isParty || PERSISTENT_STATUS_JOBS.has(job.id)) {
+        cardMechMult *= 1.1;
+      } else if (activeMechanics.has('mLantern') || activeMechanics.has('mGrasp')) {
+        cardMechMult *= 1.06;
+      } else if (!isBossTarget && (MOB_CC_STATUS_JOBS.has(job.id) || activeMechanics.has('mCrack') || activeMechanics.has('mMelt'))) {
+        cardMechMult *= 1.07;
+      }
+    }
+    if (activeMechanics.has('mFarShot')) {
+      cardMechMult *= !job.is_melee ? 1.12 : 0.9;
+    }
+    if (activeMechanics.has('mSwarm')) {
+      if (aspdInfo.aspd >= 192.9) cardMechMult *= 1.1;
+      else if (aspdInfo.aspd >= 188) cardMechMult *= 1.06;
+      else if (aspdInfo.aspd >= 180) cardMechMult *= 1.02;
+    }
+    if (activeMechanics.has('mRage')) {
+      // Rage scales atk_pct/matk_pct linearly (~+7.5% melee / +2.5% ranged)
+      cardMechMult *= job.is_melee ? 1.05 : 1.015;
+    }
+    if (activeMechanics.has('mCocoa')) {
+      cardSkillPenaltyMult *= 0.9;
+    }
   }
-  if (activeMechanics.has('mWeakSpot')) cardMechMult *= 1.1;
-  if (activeMechanics.has('mOpener')) cardMechMult *= 1.075;
-  if (activeMechanics.has('mExecute')) cardMechMult *= 1.075;
-  if (activeMechanics.has('mRage')) cardMechMult *= 1.0625;
-  if (activeMechanics.has('mSurprise')) cardMechMult *= 1.0167;
-  if (activeMechanics.has('mFarShot') && job.is_ranged_dex_atk) cardMechMult *= 1.15;
+
+  const isTemplar = job.id === 'templar';
+  const guillotineScale = isTemplar && !isSkillDisabled('sacredguillotine', 'Sacred Guillotine Chain') ? 1.748 : 0;
+  const colossusAtkScale = isTemplar && !isSkillDisabled('colossusbash', 'Colossus Radiant Bash') ? 0.4025 : 0;
+  const colossusHpScale = isTemplar && !isSkillDisabled('colossusbash', 'Colossus Radiant Bash') ? 0.021 : 0;
+  const templarBaseAutoScale = isTemplar ? Math.max(0, job.auto_atk_scale - 1.748 - 0.4025) : job.auto_atk_scale;
+
+  const autoCommonMult =
+    aspdInfo.high_aspd_basic_bonus *
+    auto_elem_mult *
+    hit_rate *
+    (job.uses_matk_basic_attack ? magic_crit_ev : phys_crit_ev) *
+    (job.uses_matk_basic_attack ? magic_def_mult : phys_def_mult) *
+    kingDmgMult *
+    cardMechMult *
+    aspdInfo.attacks_per_sec *
+    double_mult;
+
+  const effectiveAutoAtkScale = isTemplar ? templarBaseAutoScale + guillotineScale + colossusAtkScale : job.auto_atk_scale;
+  const effectiveAutoHpScale = isTemplar ? colossusHpScale : job.auto_hp_scale;
 
   const autoBaseDmg =
-    ((job.uses_matk_basic_attack && !job.uses_tablet_hybrid_basic ? 0 : total_atk * job.auto_atk_scale) +
+    ((job.uses_matk_basic_attack && !job.uses_tablet_hybrid_basic ? 0 : total_atk * effectiveAutoAtkScale) +
       total_matk * (job.auto_matk_scale || (job.uses_matk_basic_attack ? 1.0 : 0)) +
-      max_hp * job.auto_hp_scale) *
+      max_hp * effectiveAutoHpScale) *
     aspdInfo.high_aspd_basic_bonus;
 
   const auto_hit_dmg =
@@ -1736,7 +1967,10 @@ export function evaluateBuildDps(
 
   for (const sk of job.skills) {
     if (sk.aspd_scaling_type === 'normal_attack_proc') {
-      continue; // Already folded into Auto-Attack (+Procs)
+      continue; // Already accounted in Auto-Attack / Procs
+    }
+    if (isSkillDisabled(sk.id, sk.name)) {
+      continue;
     }
     if (sk.atk_scale <= 0 && sk.matk_scale <= 0 && sk.hp_scale <= 0 && !sk.vit_tier_hp_scale) {
       continue;
@@ -1751,9 +1985,9 @@ export function evaluateBuildDps(
     const gldMult = sk.vit_tier_hp_scale ? calcGldVitMultiplier(Math.floor(total_vit)) : sk.hp_scale;
     const atkPortionMult = target.is_monster ? (sk.atk_monster_mult ?? 1.0) : 1.0;
     let raw_dmg =
-      total_atk * sk.atk_scale * atkPortionMult +
+      (total_atk * sk.atk_scale * atkPortionMult +
       total_matk * sk.matk_scale +
-      max_hp * gldMult;
+      max_hp * gldMult) * cardSkillPenaltyMult;
     if (target.is_monster) raw_dmg *= sk.monster_mult;
 
     const h_mult = sk.never_misses ? 1.0 : hit_rate;
@@ -1806,7 +2040,7 @@ export function evaluateBuildDps(
       notes: sk.vit_tier_hp_scale
         ? `VIT ${Math.floor(total_vit)} -> ${gldMult}×MaxHP 檔位${target.is_monster ? ' (+50% 對怪)' : ''}`
         : sk.uses_weapon_coating
-        ? `跟隨武器塗層 (${eff_elem.toUpperCase()})`
+        ? `跟隨武器附魔 (${eff_elem.toUpperCase()})`
         : `固定 ${eff_elem.toUpperCase()} 屬性`,
     });
   }
@@ -1858,28 +2092,94 @@ export function evaluateBuildDps(
   }
 
   const total_dps = auto_dps + total_skill_dps;
+  const autoHitEntries: SkillDpsDetail[] = isTemplar
+    ? [
+        {
+          skill_id: 'basic_auto',
+          name: 'Basic Auto-Attack',
+          zh_name: '基礎普攻 (Basic Auto-Attack)',
+          dmg_type: 'physical',
+          element: auto_elem,
+          uses_coating: true,
+          expected_dmg_per_cast: total_atk * templarBaseAutoScale * (autoCommonMult / Math.max(0.001, aspdInfo.attacks_per_sec)),
+          base_cd: 1 / aspdInfo.attacks_per_sec,
+          effective_cd: 1 / aspdInfo.attacks_per_sec,
+          dps: total_atk * templarBaseAutoScale * autoCommonMult,
+          share_pct: total_dps > 0 ? ((total_atk * templarBaseAutoScale * autoCommonMult) / total_dps) * 100 : 0,
+          hit_chance: hit_rate * 100,
+          crit_chance: crit_rate * 100,
+          elem_mult: auto_elem_mult,
+          def_mult: phys_def_mult,
+          notes: `ASPD ${aspdInfo.aspd.toFixed(1)} (${aspdInfo.attacks_per_sec.toFixed(2)} 下/秒, ${aspdInfo.attack_interval_ms}ms)`,
+        },
+        ...(guillotineScale > 0
+          ? [
+              {
+                skill_id: 'sacredguillotine',
+                name: 'Sacred Guillotine Chain',
+                zh_name: '聖斷鎖鏈 (Sacred Guillotine Chain)',
+                dmg_type: 'physical',
+                element: auto_elem,
+                uses_coating: true,
+                expected_dmg_per_cast: total_atk * guillotineScale * (autoCommonMult / Math.max(0.001, aspdInfo.attacks_per_sec)),
+                base_cd: 5 / aspdInfo.attacks_per_sec,
+                effective_cd: 5 / aspdInfo.attacks_per_sec,
+                dps: total_atk * guillotineScale * autoCommonMult,
+                share_pct: total_dps > 0 ? ((total_atk * guillotineScale * autoCommonMult) / total_dps) * 100 : 0,
+                hit_chance: hit_rate * 100,
+                crit_chance: crit_rate * 100,
+                elem_mult: auto_elem_mult,
+                def_mult: phys_def_mult,
+                notes: '每 5 次普攻觸發 4 段鎖鏈 (均攤 +174.8% ATK/下)',
+              } as SkillDpsDetail,
+            ]
+          : []),
+        ...(colossusAtkScale > 0 || colossusHpScale > 0
+          ? [
+              {
+                skill_id: 'colossusbash',
+                name: 'Colossus Radiant Bash',
+                zh_name: '巨像聖擊 (Colossus Radiant Bash)',
+                dmg_type: 'physical',
+                element: auto_elem,
+                uses_coating: true,
+                expected_dmg_per_cast: (total_atk * colossusAtkScale + max_hp * colossusHpScale) * (autoCommonMult / Math.max(0.001, aspdInfo.attacks_per_sec)),
+                base_cd: 1 / Math.max(0.001, 0.35 * aspdInfo.attacks_per_sec),
+                effective_cd: 1 / Math.max(0.001, 0.35 * aspdInfo.attacks_per_sec),
+                dps: (total_atk * colossusAtkScale + max_hp * colossusHpScale) * autoCommonMult,
+                share_pct: total_dps > 0 ? (((total_atk * colossusAtkScale + max_hp * colossusHpScale) * autoCommonMult) / total_dps) * 100 : 0,
+                hit_chance: hit_rate * 100,
+                crit_chance: crit_rate * 100,
+                elem_mult: auto_elem_mult,
+                def_mult: phys_def_mult,
+                notes: '普攻 35% 機率重擊 115% ATK + 6% MaxHP',
+              } as SkillDpsDetail,
+            ]
+          : []),
+      ]
+    : [
+        {
+          skill_id: 'auto_attack',
+          name: 'Auto-Attack (+Procs)',
+          zh_name: '普攻與連段觸發 (Auto-Attack)',
+          dmg_type: job.uses_matk_basic_attack ? 'magic' : 'physical',
+          element: auto_elem,
+          uses_coating: true,
+          expected_dmg_per_cast: auto_hit_dmg * double_mult,
+          base_cd: 1 / aspdInfo.attacks_per_sec,
+          effective_cd: 1 / aspdInfo.attacks_per_sec,
+          dps: auto_dps,
+          share_pct: total_dps > 0 ? (auto_dps / total_dps) * 100 : 0,
+          hit_chance: hit_rate * 100,
+          crit_chance: crit_rate * 100,
+          elem_mult: auto_elem_mult,
+          def_mult: job.uses_matk_basic_attack ? magic_def_mult : phys_def_mult,
+          notes: `ASPD ${aspdInfo.aspd.toFixed(1)} (${aspdInfo.attacks_per_sec.toFixed(2)} 下/秒, ${aspdInfo.attack_interval_ms}ms)`,
+        },
+      ];
+
   const fullBreakdown: SkillDpsDetail[] = [
-    {
-      skill_id: 'auto_attack',
-      name: 'Auto-Attack (+Procs)',
-      zh_name:
-        job.id === 'templar'
-          ? '普攻 + 聖斷鎖鏈 / 巨像聖擊'
-          : '普攻與連段觸發 (Auto-Attack)',
-      dmg_type: job.uses_matk_basic_attack ? 'magic' : 'physical',
-      element: auto_elem,
-      uses_coating: true,
-      expected_dmg_per_cast: auto_hit_dmg * double_mult,
-      base_cd: 1 / aspdInfo.attacks_per_sec,
-      effective_cd: 1 / aspdInfo.attacks_per_sec,
-      dps: auto_dps,
-      share_pct: total_dps > 0 ? (auto_dps / total_dps) * 100 : 0,
-      hit_chance: hit_rate * 100,
-      crit_chance: crit_rate * 100,
-      elem_mult: auto_elem_mult,
-      def_mult: job.uses_matk_basic_attack ? magic_def_mult : phys_def_mult,
-      notes: `ASPD ${aspdInfo.aspd.toFixed(1)} (${aspdInfo.attacks_per_sec.toFixed(2)} 下/秒, ${aspdInfo.attack_interval_ms}ms)`,
-    },
+    ...autoHitEntries,
     ...skillDetails.map((item) => ({
       ...item,
       share_pct: total_dps > 0 ? (item.dps / total_dps) * 100 : 0,
@@ -2782,7 +3082,11 @@ function mapSkillBreakdown(
   weaponCoating: ElementType | null
 ): SkillDpsDetail[] {
   return Object.entries(rawBreakdown).map(([skName, skDps]) => {
-    const isAuto = skName.toLowerCase().includes('auto-attack');
+    const lowName = skName.toLowerCase();
+    const isAuto =
+      lowName.includes('auto-attack') ||
+      lowName.includes('sacred guillotine') ||
+      lowName.includes('colossus radiant');
     const matchedSkill = jobMeta.skills.find((s) => s.name === skName);
     const effElem: ElementType = matchedSkill
       ? matchedSkill.uses_weapon_coating && matchedSkill.element === 'neutral'
@@ -2797,10 +3101,21 @@ function mapSkillBreakdown(
       : matchedSkill?.effective_uptime_cd ?? matchedSkill?.cooldown ?? 1;
     const dmgPerCast = Number(skDps) * effCd;
 
+    const noteText =
+      skName === 'Sacred Guillotine Chain'
+        ? '每 5 次普攻觸發 4 段聖光鎖鏈 (+174.8% ATK/下)'
+        : skName === 'Colossus Radiant Bash'
+        ? '普攻 35% 機率觸發 115% ATK + 6% MaxHP'
+        : isAuto
+        ? `ASPD ${Number(ps.aspd ?? 150).toFixed(1)} (${Number(ps.attacks_per_sec ?? 1).toFixed(2)}/s, ${Number(ps.attack_interval_ms ?? 400)}ms)`
+        : matchedSkill?.description?.slice(0, 60) || (matchedSkill?.uses_weapon_coating ? `隨附魔 (${effElem.toUpperCase()})` : `固定 ${effElem.toUpperCase()}`);
+
     return {
-      skill_id: isAuto ? 'auto_attack' : matchedSkill?.id ?? skName.toLowerCase().replace(/\s+/g, '_'),
+      skill_id: isAuto
+        ? lowName.replace(/[^a-z0-9]+/g, '_')
+        : matchedSkill?.id ?? skName.toLowerCase().replace(/\s+/g, '_'),
       name: skName,
-      zh_name: skName,
+      zh_name: getSkillZhLabel(skName, matchedSkill?.zh_name ?? skName),
       dmg_type: isAuto ? (jobMeta.uses_matk_basic_attack ? 'magic' : 'physical') : matchedSkill?.dmg_type ?? 'physical',
       element: effElem,
       uses_coating: isAuto || Boolean(matchedSkill?.uses_weapon_coating),
@@ -2816,9 +3131,7 @@ function mapSkillBreakdown(
           : Number(ps.phys_crit_rate_pct ?? 0),
       elem_mult: elemMult,
       def_mult: 1,
-      notes: isAuto
-        ? `ASPD ${Number(ps.aspd ?? 150).toFixed(1)} (${Number(ps.attacks_per_sec ?? 1).toFixed(2)}/s, ${Number(ps.attack_interval_ms ?? 400)}ms)`
-        : matchedSkill?.description?.slice(0, 60) || (matchedSkill?.uses_weapon_coating ? `隨塗層 (${effElem.toUpperCase()})` : `固定 ${effElem.toUpperCase()}`),
+      notes: noteText,
     };
   });
 }
@@ -3162,6 +3475,7 @@ export async function fetchMeta(): Promise<MetaResponse> {
             auto_hp_scale: Number(j.auto_hp_scale ?? fallbackJob?.auto_hp_scale ?? 0),
             hp_bonus_pct: Number(j.hp_bonus_pct ?? fallbackJob?.hp_bonus_pct ?? 0),
             sp_bonus_pct: Number(j.sp_bonus_pct ?? fallbackJob?.sp_bonus_pct ?? 0),
+            max_job_level: Number(j.max_job_level ?? fallbackJob?.max_job_level ?? 70),
             job_bonuses: (j.job_bonuses as Record<string, number>) ?? fallbackJob?.job_bonuses ?? {},
             innate_stats: (j.innate_stats as Record<string, number>) ?? fallbackJob?.innate_stats ?? {},
             innate_passive_name: String(j.innate_passive_name ?? fallbackJob?.innate_passive_name ?? ''),
@@ -3170,6 +3484,20 @@ export async function fetchMeta(): Promise<MetaResponse> {
               ? (j.innate_class_passives as string[])
               : fallbackJob?.innate_class_passives ?? [],
             active_stats: Array.isArray(j.active_stats) ? (j.active_stats as string[]) : fallbackJob?.active_stats ?? ['str', 'agi', 'vit', 'dex', 'luk'],
+            job_skills:
+              rawSkills.length > 0
+                ? rawSkills.map((sk) => {
+                    const sid = String(sk.id ?? sk.name ?? '');
+                    const sname = String(sk.name ?? sid);
+                    return {
+                      id: sid,
+                      name: sname,
+                      zh_name: getSkillZhLabel(sid, sname),
+                      skill_type: (sk.skill_type === 'passive' ? 'passive' : 'active') as 'active' | 'passive',
+                      description: String(sk.description ?? ''),
+                    };
+                  })
+                : fallbackJob?.job_skills ?? [],
             skills: fallbackJob?.skills && fallbackJob.skills.length > 0
               ? fallbackJob.skills
               : rawSkills.map((sk) => ({
@@ -3498,6 +3826,10 @@ function normalizeEvaluateResponse(
     passives: {},
   };
 
+  const rawCoat = (data.coating_comparison as Record<string, unknown>) || {};
+  const coatedDps = Number(rawCoat.coated_dps ?? 0);
+  const uncoatedDps = Number(rawCoat.uncoated_dps ?? 0);
+
   return {
     total_dps: totalDps,
     auto_dps: Number(data.auto_dps ?? 0),
@@ -3512,6 +3844,9 @@ function normalizeEvaluateResponse(
     cards_by_slot: cardsBySlot,
     passives: passiveIds,
     armor_sets: Array.isArray(data.armor_sets) ? (data.armor_sets as string[]) : payload.armor_sets,
+    disabled_skills: Array.isArray(data.disabled_skills)
+      ? (data.disabled_skills as string[])
+      : payload.disabled_skills ?? [],
     points_spent: Number(data.points_spent ?? 0),
     total_stat_points: Number(data.total_stat_points ?? calcTotalStatPoints(payload.level)),
     points_remaining: Number(data.points_remaining ?? 0),
@@ -3529,6 +3864,15 @@ function normalizeEvaluateResponse(
       payload.target,
       weaponCoating
     ),
+    coating_comparison:
+      coatedDps > 0 || uncoatedDps > 0
+        ? {
+            with_light_coating_dps: coatedDps,
+            without_coating_dps: uncoatedDps,
+            gain_pct: Number(rawCoat.light_coating_gain_pct ?? 0),
+            light_and_shadow_active: passiveIds.some((p) => p.toLowerCase().includes('light')),
+          }
+        : undefined,
     computed_by: 'backend_api',
   };
 }
@@ -3612,6 +3956,7 @@ function runLocalEvaluate(payload: EvaluateRequest): EvaluateResponse {
     sp_pct: Number(gm.sp_pct ?? 0),
   };
 
+  const disabledSkills = payload.disabled_skills ?? [];
   const res = evaluateBuildDps(
     payload.base_stats,
     payload.passives,
@@ -3620,8 +3965,37 @@ function runLocalEvaluate(payload: EvaluateRequest): EvaluateResponse {
     level,
     gearInput,
     payload.target,
-    selectedCards
+    selectedCards,
+    disabledSkills
   );
+  const lightEvalLocal =
+    gearInput.weapon_coating === 'light'
+      ? res
+      : evaluateBuildDps(
+          payload.base_stats,
+          payload.passives,
+          payload.armor_sets,
+          job,
+          level,
+          { ...gearInput, weapon_coating: 'light' },
+          payload.target,
+          selectedCards,
+          disabledSkills
+        );
+  const noEnchantLocal =
+    gearInput.weapon_coating === null
+      ? res
+      : evaluateBuildDps(
+          payload.base_stats,
+          payload.passives,
+          payload.armor_sets,
+          job,
+          level,
+          { ...gearInput, weapon_coating: null },
+          payload.target,
+          selectedCards,
+          disabledSkills
+        );
 
   let pointsSpent = 0;
   for (const k of ['vit', 'str', 'agi', 'dex', 'int', 'luk']) {
@@ -3668,6 +4042,16 @@ function runLocalEvaluate(payload: EvaluateRequest): EvaluateResponse {
     active_card_mechanics: res.active_card_mechanics,
     combat_metrics: res.combat_metrics,
     skill_breakdown: res.skill_breakdown,
+    disabled_skills: [...disabledSkills],
+    coating_comparison: {
+      with_light_coating_dps: lightEvalLocal.total_dps,
+      without_coating_dps: noEnchantLocal.total_dps,
+      gain_pct:
+        noEnchantLocal.total_dps > 0
+          ? ((lightEvalLocal.total_dps - noEnchantLocal.total_dps) / noEnchantLocal.total_dps) * 100
+          : 0,
+      light_and_shadow_active: payload.passives.some((p) => p.toLowerCase().includes('light')),
+    },
     computed_by: 'local_fallback_engine',
   };
 }

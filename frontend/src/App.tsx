@@ -42,7 +42,7 @@ const DEFAULT_GEAR: GearInput = {
   weapon_refine: 4,
   is_two_handed: true,
   offhand_type: 'none',
-  weapon_coating: 'light',
+  weapon_coating: null,
   phys_pierce: 0,
   magic_pierce: 0,
   vit: 0,
@@ -70,25 +70,27 @@ const DEFAULT_GEAR: GearInput = {
   sp_pct: 0,
 };
 
-const DEFAULT_TARGET: TargetInput = BUILTIN_TARGET_PRESETS[0] ?? {
-  preset_id: 'tier6_dark_boss',
-  name: 'Eclipse Warlord (Lv.311 Dark Boss | DEF 255 / FLEE 500)',
-  level: 311,
-  target_def: 255,
-  target_mdef: 240,
-  target_flee: 500,
-  element: 'dark',
-  is_monster: true,
-};
+const DEFAULT_TARGET: TargetInput = BUILTIN_TARGET_PRESETS[0]
+  ? { ...BUILTIN_TARGET_PRESETS[0], is_party: false }
+  : {
+      preset_id: 'tier6_dark_boss',
+      name: 'Eclipse Warlord (Lv.311 Dark Boss | DEF 255 / FLEE 500)',
+      level: 311,
+      target_def: 255,
+      target_mdef: 240,
+      target_flee: 500,
+      element: 'dark',
+      is_monster: true,
+      is_party: false,
+    };
 
 function buildBaselineGearForJob(job?: JobMeta): GearInput {
   if (!job) return { ...DEFAULT_GEAR };
-  const isCaster = job.primary_dmg_type === 'magic';
   return {
     ...DEFAULT_GEAR,
     is_two_handed: job.is_two_handed,
     offhand_type: job.offhand_type,
-    weapon_coating: isCaster ? 'dark' : 'light',
+    weapon_coating: null,
   };
 }
 
@@ -528,7 +530,7 @@ export const App: React.FC = () => {
           onChangeCardMode={setCardMode}
           onSelectRank={handleSelectRank}
           onToggleLightCoating={(useLight) => {
-            setGear((prev) => ({
+            handleChangeSimState((prev) => ({
               ...prev,
               weapon_coating: useLight ? 'light' : null,
             }));
@@ -570,6 +572,8 @@ export const App: React.FC = () => {
             benchmarkCardRecs.cards_by_slot[cardPickerSlotKey]?.card_id ?? null
           }
           cardMechanics={cardMechanics}
+          job={optimizeResult.job}
+          target={optimizeResult.target}
           onSelectCard={(nextCardId) => {
             handleChangeSimState((prev) => ({
               ...prev,

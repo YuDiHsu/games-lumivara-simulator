@@ -401,6 +401,8 @@ export const BuildResultCard: React.FC<BuildResultCardProps> = ({
             <DpsCharts
               build={displayedBuild}
               optimizeResult={optimizeResult}
+              simWeaponEnchant={simState?.weapon_coating}
+              simCoatingComparison={simResult?.coating_comparison}
               onToggleLightCoating={onToggleLightCoating}
             />
           )}

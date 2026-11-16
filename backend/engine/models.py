@@ -156,6 +156,7 @@ class TargetProfile:
     target_flee: int = 500
     element: str = "dark"
     is_monster: bool = True
+    is_party: bool = False
     preset_id: str = "tier6_dark_boss"
     name: str = "Eclipse Warlord (Tier VI Dark MVP)"
     level: int = 120

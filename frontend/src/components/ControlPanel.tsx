@@ -36,12 +36,12 @@ const JOB_GROUP_ORDER = [
 export const TARGET_PRESETS: TargetInput[] = BUILTIN_TARGET_PRESETS;
 
 const COATING_LABEL_MAP: Record<string, string> = {
-  light: '光塗層',
-  dark: '暗塗層',
-  fire: '火塗層',
-  water: '水塗層',
-  wind: '風塗層',
-  earth: '地塗層',
+  light: '聖附魔',
+  dark: '暗附魔',
+  fire: '火附魔',
+  water: '水附魔',
+  wind: '風附魔',
+  earth: '地附魔',
 };
 
 interface ControlPanelProps {
@@ -87,7 +87,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
 
   const coatingLabel = gear.weapon_coating
     ? COATING_LABEL_MAP[gear.weapon_coating] ?? gear.weapon_coating
-    : '無塗層';
+    : '無附魔';
 
   return (
     <section
@@ -107,7 +107,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
             value={target.preset_id}
             onChange={(e) => {
               const found = presetsList.find((t) => t.preset_id === e.target.value);
-              if (found) onChangeTarget({ ...found });
+              if (found) onChangeTarget({ ...found, is_party: target.is_party ?? false });
             }}
             className="flex-1 min-w-[200px] rounded-md bg-[#F5F0E6] border border-[#C5B69D] px-2.5 py-1.5 text-xs font-medium text-[#1E1914] focus:outline-none focus:border-[#9A6B22]"
           >
@@ -217,6 +217,32 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
               PvP
             </button>
           </div>
+
+          {target.is_monster && (
+            <div
+              className="inline-flex rounded-md bg-[#EDE5D5] p-0.5 border border-[#D3C6B0] text-[11px]"
+              title="單人/組隊影響機制卡判定（例如：弱點追擊無異常職業需組隊觸發；先手一擊組隊多人時無效）"
+            >
+              <button
+                type="button"
+                onClick={() => onChangeTarget({ ...target, is_party: false })}
+                className={`px-2 py-0.5 rounded font-medium transition cursor-pointer ${
+                  !target.is_party ? 'bg-[#2B5B84] text-[#FAF6EE]' : 'text-[#5C4E3C]'
+                }`}
+              >
+                單人
+              </button>
+              <button
+                type="button"
+                onClick={() => onChangeTarget({ ...target, is_party: true })}
+                className={`px-2 py-0.5 rounded font-medium transition cursor-pointer ${
+                  target.is_party ? 'bg-[#2B5B84] text-[#FAF6EE]' : 'text-[#5C4E3C]'
+                }`}
+              >
+                組隊
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Unlocked Passives Pool Bar */}

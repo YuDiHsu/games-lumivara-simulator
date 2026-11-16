@@ -201,6 +201,7 @@ export const EquipmentPaperdoll: React.FC<EquipmentPaperdollProps> = ({
   const [selectedSlotKey, setSelectedSlotKey] = useState<string>('weapon');
   const [enforceBudget, setEnforceBudget] = useState<boolean>(true);
   const [showPassiveDrawer, setShowPassiveDrawer] = useState<boolean>(false);
+  const [showSkillDrawer, setShowSkillDrawer] = useState<boolean>(false);
 
   const bench = benchmarkBuild ?? build;
   const slotMap = new Map<string, GearAffixSlotRec>(
@@ -472,6 +473,7 @@ export const EquipmentPaperdoll: React.FC<EquipmentPaperdollProps> = ({
       }) ||
       hasBaseStatDiff ||
       anyArmorSetDiff ||
+      (simState?.disabled_skills?.length ?? 0) > 0 ||
       simState?.weapon_refine !== simState?.baseline_gear_mods.weapon_refine ||
       simState?.weapon_coating !== simState?.baseline_gear_mods.weapon_coating);
 
@@ -1110,6 +1112,153 @@ export const EquipmentPaperdoll: React.FC<EquipmentPaperdollProps> = ({
               </div>
             )}
 
+            {/* Job Skill Loadout & Recommendation Menu (includes Procs like Sacred Guillotine & Colossus Bash) */}
+            {simState && onChangeSimState && (() => {
+              const jobSkillsList =
+                job.job_skills && job.job_skills.length > 0
+                  ? job.job_skills
+                  : [
+                      ...(job.skills || []).map((s) => ({
+                        id: s.id,
+                        name: s.name,
+                        zh_name: s.zh_name,
+                        skill_type: 'active' as const,
+                        description: s.description,
+                      })),
+                      ...(job.innate_class_passives || []).map((pname) => ({
+                        id: pname.toLowerCase().replace(/[^a-z0-9]/g, ''),
+                        name: pname,
+                        zh_name: pname,
+                        skill_type: 'passive' as const,
+                        description: `本職被動：${pname}`,
+                      })),
+                    ];
+              if (jobSkillsList.length === 0) return null;
+
+              const FREE_INNATE_IDS = new Set(['undyingdawn', 'callpoon', 'huntingjob', 'summoncommand', 'lightshadow']);
+              const DPS_PASSIVE_IDS = new Set(['sacredguillotine', 'colossusbash', 'templarmastery']);
+              const LOW_PRIORITY_IDS = new Set(['lightsembrace', 'soullink', 'lightbarrier', 'bastionshield']);
+              const disabledSet = new Set((simState.disabled_skills || []).map((x) => x.toLowerCase()));
+              const activeNameSet = new Set((job.skills || []).map((s) => s.name.toLowerCase()));
+              const maxJobLv = job.max_job_level ?? 70;
+
+              const toggleSkill = (sid: string) => {
+                onChangeSimState((prev) => {
+                  const cur = new Set(prev.disabled_skills || []);
+                  if (cur.has(sid)) cur.delete(sid);
+                  else cur.add(sid);
+                  return { ...prev, disabled_skills: Array.from(cur) };
+                });
+              };
+
+              const enabledCount = jobSkillsList.filter((sk) => !disabledSet.has(sk.id.toLowerCase())).length;
+              const estPoints = jobSkillsList.reduce((acc, sk) => {
+                if (FREE_INNATE_IDS.has(sk.id.toLowerCase())) return acc;
+                return disabledSet.has(sk.id.toLowerCase()) ? acc : acc + 10;
+              }, 0);
+
+              return (
+                <div className="pt-1 border-t border-[#D3C6B0]">
+                  <button
+                    type="button"
+                    onClick={() => setShowSkillDrawer((v) => !v)}
+                    className="w-full flex items-center justify-between text-[11px] font-bold text-[#1E1914] hover:text-[#9A6B22] cursor-pointer py-0.5"
+                  >
+                    <span>
+                      本職技能欄位 (含推薦 · {enabledCount}/{jobSkillsList.length})
+                    </span>
+                    <span className="text-[10px] text-[#9A6B22] font-normal">
+                      {showSkillDrawer ? '收合' : '展開設定'}
+                    </span>
+                  </button>
+                  {showSkillDrawer && (
+                    <div className="mt-1.5 space-y-1.5">
+                      <div className="flex items-center justify-between text-[10px] bg-[#FAF6EE] border border-[#D3C6B0] rounded px-2 py-1">
+                        <span className={estPoints > maxJobLv ? 'text-[#9E2A2B] font-semibold' : 'text-[#5C4E3C]'}>
+                          估算技能點：約 {estPoints} / {maxJobLv} 點 (Job Lv.{maxJobLv})
+                        </span>
+                        {(simState.disabled_skills?.length ?? 0) > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => onChangeSimState((prev) => ({ ...prev, disabled_skills: [] }))}
+                            className="text-[#9A6B22] hover:underline font-semibold cursor-pointer"
+                          >
+                            套用推薦全開
+                          </button>
+                        )}
+                      </div>
+                      <div className="max-h-56 overflow-y-auto space-y-1 pr-0.5">
+                        {jobSkillsList.map((sk) => {
+                          const lowId = sk.id.toLowerCase();
+                          const isFreeInnate = FREE_INNATE_IDS.has(lowId);
+                          const isDisabled = !isFreeInnate && disabledSet.has(lowId);
+                          const isProcPassive =
+                            lowId === 'sacredguillotine' || lowId === 'colossusbash';
+                          const isDpsActive =
+                            activeNameSet.has(sk.name.toLowerCase()) ||
+                            ['blackcatknight', 'blackcatarcher', 'blackcatcleric'].includes(lowId);
+                          const affectsDps = isProcPassive || DPS_PASSIVE_IDS.has(lowId) || isDpsActive;
+                          const isRecommended = affectsDps && !LOW_PRIORITY_IDS.has(lowId);
+
+                          const roleBadge = isFreeInnate
+                            ? '免費固有'
+                            : isProcPassive
+                            ? '普攻觸發 DPS'
+                            : lowId === 'templarmastery'
+                            ? '面板屬性'
+                            : isDpsActive
+                            ? '主動 DPS'
+                            : '輔助/生存';
+
+                          return (
+                            <label
+                              key={sk.id}
+                              className={`flex items-start gap-1.5 rounded border px-2 py-1 text-[11px] cursor-pointer transition ${
+                                isDisabled
+                                  ? 'bg-[#EDE5D5]/60 border-[#D3C6B0] text-[#8A7963]'
+                                  : 'bg-[#FAF6EE] border-[#C5B69D] text-[#1E1914]'
+                              }`}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={!isDisabled}
+                                disabled={isFreeInnate}
+                                onChange={() => toggleSkill(sk.id)}
+                                className="mt-0.5 rounded accent-[#9A6B22]"
+                              />
+                              <div className="min-w-0 flex-1">
+                                <div className="flex flex-wrap items-center gap-1">
+                                  <span className="font-semibold truncate">{sk.zh_name}</span>
+                                  <span className="text-[9px] px-1 rounded bg-[#EDE5D5] border border-[#D3C6B0] text-[#5C4E3C]">
+                                    {roleBadge}
+                                  </span>
+                                  {isRecommended && (
+                                    <span className="text-[9px] px-1 rounded bg-[#2D6A4F]/12 text-[#2D6A4F] border border-[#2D6A4F]/30 font-bold">
+                                      推薦必滿
+                                    </span>
+                                  )}
+                                  {!isRecommended && affectsDps && (
+                                    <span className="text-[9px] px-1 rounded bg-[#9A6B22]/10 text-[#9A6B22] border border-[#9A6B22]/30">
+                                      可選取捨
+                                    </span>
+                                  )}
+                                </div>
+                                {sk.description && (
+                                  <div className="text-[10px] text-[#5C4E3C] line-clamp-2 mt-0.5">
+                                    {sk.description}
+                                  </div>
+                                )}
+                              </div>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+
             {/* Stat Allocation Priority */}
             <div className="space-y-1 pt-1 border-t border-[#D3C6B0]">
               <div className="flex items-center justify-between text-[11px] font-bold text-[#1E1914]">
@@ -1576,9 +1725,9 @@ export const EquipmentPaperdoll: React.FC<EquipmentPaperdollProps> = ({
                             />
                           </div>
                           <div>
-                            <div className="text-[11px] font-semibold text-[#1E1914] mb-1">武器屬性塗層</div>
+                            <div className="text-[11px] font-semibold text-[#1E1914] mb-1">武器屬性附魔</div>
                             <select
-                              aria-label="武器塗層選擇"
+                              aria-label="武器附魔選擇"
                               value={simState.weapon_coating ?? ''}
                               onChange={(e) => {
                                 const nextCoat = (e.target.value || null) as ElementType | null;
@@ -1628,7 +1777,7 @@ export const EquipmentPaperdoll: React.FC<EquipmentPaperdollProps> = ({
                                   }
                                   className="px-2 py-1 rounded bg-[#9A6B22] hover:bg-[#825819] text-[#FAF6EE] text-[10px] font-semibold cursor-pointer transition"
                                 >
-                                  以此精煉/塗層重算 Top 5
+                                  以此精煉/附魔重算 Top 5
                                 </button>
                               )}
                             </div>
