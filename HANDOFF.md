@@ -10,12 +10,15 @@
      * `combat_math.py`：純 Python 領域公式（含 `calc_body_hp` / `calc_max_hp`、`stat_step_cost`、DEF/MDEF 減傷與穿透上限、獨立 HIT vs ASPD、180 軟上限與 193 硬上限、DEX 150 瞬詠與 250 多段加速、元素矩陣與 Eclipse Warlord Card）。
      * `job_specs.py`：15 職業技能組、裝備預設與卡片／被動／套裝規格庫（含 `build_runtime_catalog` 與 SQLite 合併）。
      * `optimizer.py`：兩階段最佳化（Pass 1 門檻種子與座標上升尋優被動／套裝 -> 貪婪最佳插卡 -> Pass 2 帶卡重配屬性點），並輸出 `gear_affix_recommendations`（10 部位裝備特別詞綴、雙 6 維屬性與獨立副條推薦）。
-     * API 端點：`GET /api/health`、`GET /api/meta`、`GET /api/cdc/status`、`GET /api/cdc/changes`、`POST /api/cdc/sync`、`POST /api/optimize`。
+     * API 端點：`GET /api/health`、`GET /api/meta`（含 `equipment_affix_system` 動態詞綴系統）、`GET /api/cdc/status`、`GET /api/cdc/changes`、`POST /api/cdc/sync`、`POST /api/optimize`、`POST /api/evaluate`。
   3. **React + Vite + Tailwind CSS 互動分析儀表板（`frontend/src/`）**：
      * 採用復古手抄本羊皮紙與墨色風格（`#F5F0E6` / `#FAF6EE`），支援後端離線時以 [wikiFallbackData.ts](file:///d:/Apps/PyProject/lumivara/frontend/src/api/wikiFallbackData.ts) 與 [client.ts](file:///d:/Apps/PyProject/lumivara/frontend/src/api/client.ts) 本地演算完整運作。
-     * 頂部 **CDC 改版異動通知列（`CdcBanner.tsx`）**：顯示更新摘要、雜湊狀態，並提供 `Sync Wiki Now` 與 `Simulate Balance Patch` 測試按鈕。
-     * 左側 **角色與裝備配置面板（`ControlPanel.tsx`）**：內建各職業驗證情境預設、15 職業切換（切換自動重置該職業基準裝備參數）、Lv.1–150 等級滑桿、武器屬性塗層開關、精煉 `+0 ~ +10`、詞綴預算與目標怪物預設。
-     * 右側 **最佳配裝分析與裝備紙娃娃（`BuildResultCard.tsx`, `EquipmentPaperdoll.tsx`, `DpsCharts.tsx`）**：呈現 Top N 最佳配點、4/4 跨職業被動、3×2 件套（或 4+2 / 6 件套）、10 部位插卡與單件 Tier VI 特別詞綴＋雙 6 維屬性詳情卡，以及 `VIT +12 vs 固定 HP +180` 效益實測對比。
+     * 頂部 **CDC 改版異動通知列（`CdcBanner.tsx`）**：顯示更新摘要、雜湊狀態，提供 `Sync Wiki Now` 與 `Simulate Balance Patch` 測試按鈕，並在同步後自動重新拉取 `/api/meta`。
+     * 頂部 **精簡控制列（`ControlPanel.tsx`）**：整合討伐目標預設、自訂 DEF/MDEF/FLEE、目標屬性、PvE/PvP 切換、依職業與 Wiki 繁體中文效果分組的 **跨職被動池** 選擇器，以及「立即計算最佳配裝」觸發鈕。
+     * **Top 5 排行與統一互動紙娃娃模擬器（`BuildResultCard.tsx`, `EquipmentPaperdoll.tsx`, `CardPickerModal.tsx`, `BuildJsonModal.tsx`, `DpsCharts.tsx`）**：
+       * 中央整合 15 職業切換、Lv.1–150 等級調整、6 維基礎配點滑桿與 4/4 跨職被動微調。
+       * 10 部位裝備支援 **分部位階級 `I ~ VI` 混用**、雙 6 維屬性（依階級與 2H 規則動態限縮）、特別詞綴（由 `/api/meta` `equipment_affix_system` 動態載入各部位詞池）、全 10 部位原生白字屬性／飾品白字類型與數值滑桿、獨立 `HIT`/`FLEE`/`HP` 微調、單件防具套裝指派、武器精煉 `+0 ~ +10`／塗層與 Wiki 全文卡片搜尋選卡；微調後防抖呼叫 `/api/evaluate` 即時比較與基準配裝的 DPS 落差，且於切換 PvE/PvP、討伐目標、被動池或卡片模式時保留所有自訂配置。
+       * 支援 **`lumivara-build-v1` JSON 匯出／匯入**（剪貼簿複製、`.json` 檔案下載／上傳、防呆檢查與跨職業／等級自動切換還原）。
 
 ---
 
@@ -52,7 +55,7 @@
 1. **常駐光屬性武器塗層（`weapon_coating = "light"`）**：
    * **總秒傷（Total DPS）**：**`4,120,285.73 DPS`**（普攻與連鎖 `254,719.64` + 技能 `3,865,566.09`）。
    * **基礎配點**：`STR 91 / AGI 61 / VIT 119 / INT 1 / DEX 31 / LUK 119`（含裝備與卡片總和：`STR 134 / AGI 100 / VIT 315 / DEX 61 / LUK 155`，`MaxHP 38,823`、`ASPD 182.9`、`HIT 100%`、物理穿透 **`54.0%`**、`GLD 25.0×`）。
-   * **前端預設情境對比**（[ControlPanel.tsx](file:///d:/Apps/PyProject/lumivara/frontend/src/components/ControlPanel.tsx#L68-L96) 預設 `gear.phys_pierce = 0.25` 等高階參數）：`Total DPS 5,805,944.07`、`phys_pierce 58.0%`、套裝 `['Armor Breaker', 'Armor Breaker', 'Executioner']`。
+   * **前端預設基準參數對比**：[App.tsx](file:///d:/Apps/PyProject/lumivara/frontend/src/App.tsx#L33-L63) 採用零額外穿透的純淨初始 `DEFAULT_GEAR`（`weapon_refine = 4`、`phys_pierce = 0`），實際由 10 部位紙娃娃與卡片加總獲得屬性，推薦與模擬 DPS 基準一致。
    * **4/4 跨職業被動**：`['Vigor', 'Light & Shadow', 'Sovereign Dividend Yield', 'Close-Combat Mastery']`。
    * **6 件防具套裝（後端預設）**：`['Armor Breaker', 'Armor Breaker', 'Armor Breaker']`（`+21% P.Pierce`）。
    * **推薦插卡（Standard Tier VI）**：
@@ -82,7 +85,7 @@
 # 1. 同步 Python 虛擬環境依賴
 uv sync
 
-# 2. 執行完整測試套件（目前 31/31 全數通過）
+# 2. 執行完整測試套件（目前 32/32 全數通過）
 uv run pytest -v
 
 # 3. 執行單機 CLI 秒傷最佳化驗證腳本
@@ -98,4 +101,4 @@ npm --prefix frontend run dev
 
 ### 4.2 後續可進一步強化的項目（非阻塞）
 1. **裝備詞綴與屬性點聯合退點計算**：目前 `stat_priority_guide` 顯示固定基礎點數下裝備 `+12` 屬性的直接 DPS 增量；後續可額外計算「裝備／卡片補高成本區間（如 `VIT 99+`）後退回屬性點轉投低成本區間」的聯合置換價值。
-2. **左側手動裝備面板上限檢核**：左側裝備總屬性目前直接依使用者輸入累加，尚未對照「最多 10 件裝備 × 每件最多 2 條 6 維 × 單條 +18」做手動輸入合理性提示。
+2. **多組配裝書籤比對視圖**：目前已支援單組 `lumivara-build-v1` JSON 匯出／匯入與本地保存，後續可於前端加入 `localStorage` 多組配置書籤清單以並排比較多套裝備方案。

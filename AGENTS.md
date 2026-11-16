@@ -6,7 +6,7 @@
 * **全端架構（Full-Stack Architecture）**：
   * **資料層與 CDC 爬蟲（`backend/db/`, `backend/scraper/`）**：使用 **SQLite**（`data/lumivara.db`）儲存全 15 職業、技能、跨職業被動、裝備、防具套裝、卡片與目標怪物資料；搭配 `httpx` + `beautifulsoup4` 定期同步 [Lumivara Online Wiki](https://lumivaraonline.com/wiki/) 與更新日誌，並透過 Canonical JSON SHA-256 雜湊實作 **CDC（Change Data Capture）變更偵測**（寫入 `entity_hashes` 與 `data_changes`）。
   * **後端 API 與最佳化引擎（`backend/engine/`, `backend/api/`, `backend/main.py`）**：以 **FastAPI + Pydantic** 提供 RESTful API，核心秒傷計算與多階段尋優引擎維持高內聚、無外部狀態耦合設計，並以 `data/wiki_ground_truth.json` 作為 Wiki 公式基準。
-  * **前端互動儀表板（`frontend/`）**：使用 **React + Vite + Tailwind CSS**（支援離線 Fallback：`frontend/src/api/wikiFallbackData.ts`）呈現頂部 CDC 改版異動通知列、左側角色與裝備配置面板、裝備紙娃娃插槽建議（`EquipmentPaperdoll.tsx`），以及右側 Top 5 最佳配點／被動／套裝／10 部位插卡推薦與 DPS 構成拆解圖表。
+  * **前端互動儀表板（`frontend/`）**：使用 **React + Vite + Tailwind CSS**（支援離線 Fallback：`frontend/src/api/wikiFallbackData.ts`）呈現頂部 CDC 改版異動通知列、精簡全寬控制列（`ControlPanel.tsx`：討伐目標與跨職被動池）、Top 5 推薦方案切換與統一紙娃娃互動模擬器（`EquipmentPaperdoll.tsx`，整合職業／等級、6 維配點、10 部位 Tier I–VI 裝備詞綴／原生白字／飾品白字／套裝／精煉塗層與 4/4 被動）、Wiki 全文卡片搜尋視窗（`CardPickerModal.tsx`）、JSON 匯出／匯入視窗（`BuildJsonModal.tsx`），以及 DPS 構成拆解圖表。裝備階級與詞池規則由 `/api/meta` 的 `equipment_affix_system` 動態提供，不於前端寫死。
 * **套件與虛擬環境管理（`uv` / `npm`）**：
   * Python 依賴透過 `pyproject.toml` 與 **`uv`** 統一管理（虛擬環境位於專案根目錄 `.venv`）：
     ```bash
